@@ -31,7 +31,8 @@ An advanced processor for standard game textures, optimized for VRAM management 
 * **Multithreading Support**: Main window won't freeze during long batch processes.
 * **Progress Bar**: Shows progress for large batches.
 
-<img width="1152" height="932" alt="image" src="https://github.com/user-attachments/assets/cc8d2093-93f5-4fe4-9f74-9f6d71896b12" />
+<img width="1152" height="932" alt="image" src="https://github.com/user-attachments/assets/d6d22349-589f-479c-bfd2-a0a1e31f8f82" />
+
 
 
 
