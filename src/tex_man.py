@@ -555,6 +555,12 @@ class BZReduxSuite(ctk.CTk):
         self.tex_mips = ctk.BooleanVar(value=True)
         ctk.CTkCheckBox(fmt_f, text="Gen Mipmaps", variable=self.tex_mips).grid(row=2, column=1, padx=5, pady=2)
         
+        # Add to setup_texture_tab under Format Settings
+        ctk.CTkLabel(fmt_f, text="Rescale if > :").grid(row=4, column=0, padx=5, pady=5)
+        self.tex_scale_cutoff = ctk.StringVar(value="Disabled")
+        ctk.CTkOptionMenu(fmt_f, variable=self.tex_scale_cutoff, 
+                          values=["Disabled", "512", "1024", "2048", "4096"]).grid(row=4, column=1, padx=5, pady=5)
+        
         # FIX: Moved Overwrite into the format frame using grid to match its siblings
         self.tex_overwrite = ctk.BooleanVar(value=False) 
         ctk.CTkCheckBox(fmt_f, text="Overwrite Existing", variable=self.tex_overwrite).grid(row=3, column=0, columnspan=2, padx=10, pady=5, sticky="w")
@@ -674,13 +680,18 @@ class BZReduxSuite(ctk.CTk):
         img = Image.open(path).convert("RGBA")
         w, h = img.size
 
-        # Scaling cutoff logic
-        cutoff = getattr(self, 'tex_scale_cutoff', ctk.StringVar(value="Disabled")).get()
-        if cutoff != "Disabled":
-            limit = int(cutoff)
-            if w > limit or h > limit:
-                img = img.resize((w // 2, h // 2), Image.Resampling.LANCZOS)
-                w, h = img.size
+# --- RESTORED: Power of 2 Rescaling Logic ---
+        cutoff_val = self.tex_scale_cutoff.get()
+        if cutoff_val != "Disabled":
+            try:
+                limit = int(cutoff_val)
+                # If either dimension exceeds the budget, downscale by half
+                if w > limit or h > limit:
+                    new_w, new_h = w // 2, h // 2
+                    img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                    w, h = img.size # Update dimensions for logging
+            except ValueError:
+                pass
 
         # Alpha detection
         has_alpha = False
