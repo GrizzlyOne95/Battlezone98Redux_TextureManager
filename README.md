@@ -26,8 +26,13 @@ An advanced processor for standard game textures, optimized for VRAM management 
 * **Alpha Auto-Detection**: Scans images during batch processing to automatically choose the most efficient compression codec.
 * **Power of 2 Rescaling**: Conditional downscaling logic (512 to 4096) to ensure textures fit within performance budgets.
 * **Mipmap Generation**: Optional mipmap creation to prevent distant texture shimmering.
+* **Automatic Normal/Specular/Emissive Generation**: Optional additional texture generation with flip normals option, and sliders for thresholds.
+* **Overwrite Existing Option**
+* **Multithreading Support**: Main window won't freeze during long batch processes.
+* **Progress Bar**: Shows progress for large batches.
 
-<img width="1152" height="932" alt="image" src="https://github.com/user-attachments/assets/40b4a2b6-c8fb-4d72-a2af-e1f932427456" />
+<img width="1152" height="932" alt="image" src="https://github.com/user-attachments/assets/cc8d2093-93f5-4fe4-9f74-9f6d71896b12" />
+
 
 
 ### MAP Texture Serializer
