@@ -4,6 +4,7 @@ from tkinter import filedialog, messagebox, colorchooser
 from PIL import Image
 import imageio.v3 as iio
 import numpy as np
+import threading
 
 # --- BZ98 ENGINE CONSTANTS ---
 ZONE_RES = 256  # Redux Standard (256x256 per zone)
@@ -83,6 +84,21 @@ class BZReduxSuite(ctk.CTk):
         self.tab_tex = self.tabview.add("Texture Manager")
         self.tab_map = self.tabview.add("MAP Converter")
         self.tab_lgt = self.tabview.add("LGT Converter")
+        
+        # New Generation Variables
+        self.gen_emissive = ctk.BooleanVar(value=False)
+        self.emissive_thresh = ctk.IntVar(value=200)
+        self.gen_specular = ctk.BooleanVar(value=False)
+        self.spec_contrast = ctk.DoubleVar(value=1.5)
+        self.gen_normal = ctk.BooleanVar(value=False)
+        self.norm_strength = ctk.DoubleVar(value=2.0)
+        self.norm_flip_y = ctk.BooleanVar(value=False) # Optional: Toggle for DX/GL compatibility
+        
+        # Existing Logic Variables
+        self.tex_scale_cutoff = ctk.StringVar(value="Disabled")
+        self.tex_auto_alpha = ctk.BooleanVar(value=True)
+        self.tex_batch_out = ctk.StringVar(value="[Same as Source]")
+        self.tex_from_ext = ctk.StringVar(value="all supported")
 
         self.setup_act_tab()
         self.setup_texture_tab()
@@ -514,68 +530,134 @@ class BZReduxSuite(ctk.CTk):
             self.log_msg(self.lgt_log, f"Packed {gw*gh} zones into .LGT (Top-Down).")
         except Exception as e: self.log_msg(self.lgt_log, f"ERROR: {e}")
 
-# --- TEXTURE MANAGER ---
     def setup_texture_tab(self):
         ctk.CTkLabel(self.tab_tex, text="Advanced Texture Processor", font=("Arial", 20, "bold")).pack(pady=10)
         
-        # 1. Format & Logic Options
-        opts = ctk.CTkFrame(self.tab_tex)
-        opts.pack(pady=10, padx=20, fill="x")
-        
-        # Conversion Path
-        ctk.CTkLabel(opts, text="Convert From:").grid(row=0, column=0, padx=10, pady=5, sticky="w")
-        self.tex_from_ext = ctk.StringVar(value="All Supported")
-        ctk.CTkOptionMenu(opts, variable=self.tex_from_ext, values=["All Supported", ".png", ".tga", ".dds", ".jpg"]).grid(row=0, column=1, padx=5, pady=5)
+        # Main container to split controls and log
+        main_content = ctk.CTkFrame(self.tab_tex)
+        main_content.pack(fill="both", expand=True, padx=10, pady=5)
 
-        ctk.CTkLabel(opts, text="Convert To:").grid(row=0, column=2, padx=10, pady=5, sticky="w")
+        # Left Column: Format & File Settings
+        left_col = ctk.CTkFrame(main_content)
+        left_col.pack(side="left", fill="both", expand=True, padx=5, pady=5)
+
+        # 1. Format Options
+        fmt_f = ctk.CTkFrame(left_col)
+        fmt_f.pack(fill="x", padx=5, pady=5)
+        
+        ctk.CTkLabel(fmt_f, text="Format Settings", font=("Arial", 12, "bold")).grid(row=0, column=0, columnspan=2, pady=5)
         self.tex_to_ext = ctk.StringVar(value=".dds")
-        ctk.CTkOptionMenu(opts, variable=self.tex_to_ext, values=[".dds", ".png", ".tga"]).grid(row=0, column=3, padx=5, pady=5)
+        ctk.CTkOptionMenu(fmt_f, variable=self.tex_to_ext, values=[".dds", ".png", ".tga"]).grid(row=1, column=1, padx=5, pady=5)
+        ctk.CTkLabel(fmt_f, text="Output Format:").grid(row=1, column=0, padx=5)
 
-        # Compression & Alpha
         self.tex_compress = ctk.BooleanVar(value=True)
-        ctk.CTkCheckBox(opts, text="Compress (DXT1/DXT5)", variable=self.tex_compress).grid(row=1, column=0, columnspan=2, padx=10, pady=5, sticky="w")
-        
-        self.tex_auto_alpha = ctk.BooleanVar(value=True)
-        ctk.CTkCheckBox(opts, text="Auto-Detect Alpha", variable=self.tex_auto_alpha).grid(row=1, column=2, columnspan=2, padx=10, pady=5, sticky="w")
-
-        # Mipmaps
+        ctk.CTkCheckBox(fmt_f, text="DXT Compression", variable=self.tex_compress).grid(row=2, column=0, padx=5, pady=2)
         self.tex_mips = ctk.BooleanVar(value=True)
-        ctk.CTkCheckBox(opts, text="Generate Mipmaps", variable=self.tex_mips).grid(row=2, column=0, columnspan=2, padx=10, pady=5, sticky="w")
-
-        # 2. Power of 2 Rescaling Logic
-        scale_f = ctk.CTkFrame(self.tab_tex)
-        scale_f.pack(pady=5, padx=20, fill="x")
+        ctk.CTkCheckBox(fmt_f, text="Gen Mipmaps", variable=self.tex_mips).grid(row=2, column=1, padx=5, pady=2)
         
-        ctk.CTkLabel(scale_f, text="Downscale if resolution is over:").pack(side="left", padx=10)
-        self.tex_scale_cutoff = ctk.StringVar(value="Disabled")
-        ctk.CTkOptionMenu(scale_f, variable=self.tex_scale_cutoff, 
-                          values=["Disabled", "512", "1024", "2048", "4096"]).pack(side="left", padx=5)
+        # FIX: Moved Overwrite into the format frame using grid to match its siblings
+        self.tex_overwrite = ctk.BooleanVar(value=False) 
+        ctk.CTkCheckBox(fmt_f, text="Overwrite Existing", variable=self.tex_overwrite).grid(row=3, column=0, columnspan=2, padx=10, pady=5, sticky="w")
+
+        # --- Advanced Map Generation Section ---
+        gen_f = ctk.CTkFrame(left_col)
+        gen_f.pack(pady=5, padx=5, fill="x")
+        ctk.CTkLabel(gen_f, text="Map Generation", font=("Arial", 12, "bold")).pack(pady=5)
+
+        # Emissive Row
+        e_f = ctk.CTkFrame(gen_f, fg_color="transparent")
+        e_f.pack(fill="x", padx=10, pady=2)
+        ctk.CTkCheckBox(e_f, text="Create Emissive", variable=self.gen_emissive).pack(side="left")
+        ctk.CTkLabel(e_f, text="Threshold:").pack(side="right", padx=5)
+        ctk.CTkSlider(e_f, from_=0, to=255, variable=self.emissive_thresh, width=150).pack(side="right")
+
+        # Specular Row
+        s_f = ctk.CTkFrame(gen_f, fg_color="transparent")
+        s_f.pack(fill="x", padx=10, pady=2)
+        ctk.CTkCheckBox(s_f, text="Create Specular", variable=self.gen_specular).pack(side="left")
+        ctk.CTkLabel(s_f, text="Contrast:").pack(side="right", padx=5)
+        ctk.CTkSlider(s_f, from_=0.5, to=3.0, variable=self.spec_contrast, width=150).pack(side="right")
+
+        # Normal Row
+        n_f = ctk.CTkFrame(gen_f, fg_color="transparent")
+        n_f.pack(fill="x", padx=10, pady=2)
+        ctk.CTkCheckBox(n_f, text="Smart Normal", variable=self.gen_normal).pack(side="left")
+        ctk.CTkCheckBox(n_f, text="Flip Y (DX)", variable=self.norm_flip_y).pack(side="left", padx=20)
+        ctk.CTkLabel(n_f, text="Strength:").pack(side="right", padx=5)
+        ctk.CTkSlider(n_f, from_=0.1, to=10.0, variable=self.norm_strength, width=150).pack(side="right")
+
+        # 3. Actions & Log (Right Column)
+        right_col = ctk.CTkFrame(main_content)
+        right_col.pack(side="right", fill="both", expand=True, padx=5, pady=5)
         
-        ctk.CTkLabel(scale_f, text="(Reduces by Power of 2)", font=("Arial", 10, "italic")).pack(side="left", padx=5)
+        self.tex_log = ctk.CTkTextbox(right_col, height=300)
+        self.tex_log.pack(fill="both", expand=True, padx=5, pady=5)
 
-        # 3. Batch Output Folder
-        batch_f = ctk.CTkFrame(self.tab_tex)
-        batch_f.pack(pady=5, padx=20, fill="x")
+        self.tex_progress = ctk.CTkProgressBar(right_col)
+        self.tex_progress.pack(fill="x", padx=5, pady=2)
+        self.tex_progress.set(0)
+
+        btn_f = ctk.CTkFrame(right_col)
+        btn_f.pack(fill="x", pady=5)
+        ctk.CTkButton(btn_f, text="Process Single", command=self.ui_single_tex).pack(side="left", fill="x", expand=True, padx=2)
+        ctk.CTkButton(btn_f, text="Batch Folder", command=self.start_batch_thread, fg_color="#8e44ad").pack(side="left", fill="x", expand=True, padx=2)
         
-        self.tex_batch_out = ctk.StringVar(value="[Same as Source]")
-        ctk.CTkLabel(batch_f, text="Batch Output:").pack(side="left", padx=10)
-        ctk.CTkEntry(batch_f, textvariable=self.tex_batch_out, width=350).pack(side="left", padx=5)
-        ctk.CTkButton(batch_f, text="Browse", width=60, command=self.set_tex_batch_out).pack(side="left", padx=5)
-
-        # 4. Action Buttons
-        act_f = ctk.CTkFrame(self.tab_tex)
-        act_f.pack(pady=10, padx=20, fill="x")
-        ctk.CTkButton(act_f, text="+ Single Texture", fg_color="#2980b9", height=40, command=self.ui_single_tex).pack(side="left", padx=10, expand=True, fill="x")
-        ctk.CTkButton(act_f, text="+ Batch Folder", fg_color="#8e44ad", height=40, command=self.ui_batch_tex).pack(side="left", padx=10, expand=True, fill="x")
-
-        self.tex_log = ctk.CTkTextbox(self.tab_tex, height=350)
-        self.tex_log.pack(padx=20, pady=10, fill="both")
+        # Batch Settings
+        batch_f = ctk.CTkFrame(left_col)
+        batch_f.pack(fill="x", padx=5, pady=5)
+        ctk.CTkLabel(batch_f, text="Batch Settings", font=("Arial", 12, "bold")).pack(pady=5)
+        
+        self.tex_from_ext = ctk.StringVar(value="all supported")
+        ctk.CTkOptionMenu(batch_f, variable=self.tex_from_ext, values=["all supported", ".png", ".tga", ".dds", ".jpg"]).pack(pady=2)
+        
+        ctk.CTkEntry(batch_f, textvariable=self.tex_batch_out).pack(fill="x", padx=10, pady=2)
+        ctk.CTkButton(batch_f, text="Set Output Folder", command=self.set_tex_batch_out).pack(pady=2)
 
     # --- TEXTURE LOGIC FUNCTIONS ---
     def set_tex_batch_out(self):
         folder = filedialog.askdirectory()
         if folder: 
             self.tex_batch_out.set(folder)
+
+    def start_batch_thread(self):
+        src_folder = filedialog.askdirectory(title="Select Source Folder")
+        if not src_folder: return
+        self.tex_progress.set(0)
+        thread = threading.Thread(target=self.ui_batch_tex, args=(src_folder,), daemon=True)
+        thread.start()
+
+    def ui_batch_tex(self, src_folder):
+        """Thread-safe batch processing with progress updates"""
+        out_dir = self.tex_batch_out.get()
+        if out_dir == "[Same as Source]": 
+            out_dir = None
+        
+        from_filter = self.tex_from_ext.get().lower()
+        
+        # Identify valid files
+        supported = [".png", ".tga", ".dds", ".jpg", ".bmp"]
+        files = [f for f in os.listdir(src_folder) if os.path.splitext(f)[1].lower() in supported]
+        
+        if from_filter != "all supported":
+            files = [f for f in files if os.path.splitext(f)[1].lower() == from_filter]
+        
+        total = len(files)
+        if total == 0:
+            self.after(0, lambda: self.log_msg(self.tex_log, "No matching files found."))
+            return
+
+        count = 0
+        for file in files:
+            try:
+                msg = self.process_texture(os.path.join(src_folder, file), out_dir)
+                count += 1
+                # Schedule UI updates on the main thread
+                progress = count / total
+                self.after(0, lambda m=msg, p=progress: (self.log_msg(self.tex_log, m), self.tex_progress.set(p)))
+            except Exception as e:
+                self.after(0, lambda f=file, err=e: self.log_msg(self.tex_log, f"Skip {f}: {err}"))
+                    
+        self.after(0, lambda c=count: self.log_msg(self.tex_log, f"BATCH COMPLETE: {c} textures processed."))
 
     def process_texture(self, path, output_folder=None):
         base_name = os.path.basename(path)
@@ -584,41 +666,71 @@ class BZReduxSuite(ctk.CTk):
         
         target_ext = self.tex_to_ext.get()
         out_path = os.path.join(dest_dir, file_no_ext + target_ext)
+        
+        # CHECK FOR OVERWRITE
+        if os.path.exists(out_path) and not self.tex_overwrite.get():
+            return f"Skipped: {file_no_ext}{target_ext} already exists."
 
-        # 1. Load Image
         img = Image.open(path).convert("RGBA")
         w, h = img.size
 
-        # 2. Power of 2 Downscaling Logic
-        cutoff = self.tex_scale_cutoff.get()
+        # Scaling cutoff logic
+        cutoff = getattr(self, 'tex_scale_cutoff', ctk.StringVar(value="Disabled")).get()
         if cutoff != "Disabled":
             limit = int(cutoff)
             if w > limit or h > limit:
-                # Calculate new dimensions (halved)
-                new_w, new_h = w // 2, h // 2
-                img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                img = img.resize((w // 2, h // 2), Image.Resampling.LANCZOS)
                 w, h = img.size
 
-        # 3. Alpha Detection
+        # Alpha detection
         has_alpha = False
         if self.tex_auto_alpha.get():
             alpha_extrema = img.getchannel('A').getextrema()
-            if alpha_extrema[0] < 255:
+            if alpha_extrema and alpha_extrema[0] < 255:
                 has_alpha = True
         
-        # 4. Save Logic
-        if target_ext.lower() == ".dds":
+        if self.gen_emissive.get(): self.internal_gen_emissive(img, dest_dir, file_no_ext, target_ext)
+        if self.gen_specular.get(): self.internal_gen_specular(img, dest_dir, file_no_ext, target_ext)
+        if self.gen_normal.get(): self.internal_gen_normal(img, dest_dir, file_no_ext, target_ext)
+        
+        self.internal_save_img(img, out_path, has_alpha)
+        return f"Done: {file_no_ext} ({w}x{h}) -> {target_ext}"
+
+    # --- INTERNAL UTILITIES ---
+    def internal_save_img(self, img, out_path, has_alpha):
+        if out_path.lower().endswith(".dds"):
             codec = "DXT5" if has_alpha else "DXT1"
-            if not self.tex_compress.get():
-                codec = None
-            
-            # iio.imwrite handles the DDS packing
-            iio.imwrite(out_path, np.array(img), format="DDS", 
-                        codec=codec, mipmaps=self.tex_mips.get())
+            if not self.tex_compress.get(): codec = None
+            iio.imwrite(out_path, np.array(img), format="DDS", codec=codec, mipmaps=self.tex_mips.get())
         else:
             img.save(out_path)
 
-        return f"Done: {file_no_ext} ({w}x{h}) -> {target_ext}"
+    def internal_gen_emissive(self, img, dest, name, ext):
+        thresh = self.emissive_thresh.get()
+        mask = img.convert("L").point(lambda p: 255 if p > thresh else 0)
+        emissive = Image.new("RGBA", img.size, (0, 0, 0, 255))
+        emissive.paste(img, (0, 0), mask)
+        self.internal_save_img(emissive, os.path.join(dest, f"{name}_e{ext}"), False)
+
+    def internal_gen_specular(self, img, dest, name, ext):
+        spec = img.convert("L")
+        contrast = self.spec_contrast.get()
+        spec = spec.point(lambda p: min(255, int(p * contrast)))
+        self.internal_save_img(spec.convert("RGBA"), os.path.join(dest, f"{name}_s{ext}"), False)
+
+    def internal_gen_normal(self, img, dest, name, ext):
+        gray = np.array(img.convert("L"), dtype=float)
+        grad_x = np.gradient(gray, axis=1)
+        grad_y = np.gradient(gray, axis=0)
+        strength = self.norm_strength.get()
+        nx = -grad_x * strength
+        ny = grad_y * strength if self.norm_flip_y.get() else -grad_y * strength
+        nz = np.ones_like(gray) * 255.0
+        norm = np.sqrt(nx**2 + ny**2 + nz**2)
+        nx, ny, nz = nx/norm, ny/norm, nz/norm
+        r, g, b = ((nx + 1.0) * 127.5).astype(np.uint8), ((ny + 1.0) * 127.5).astype(np.uint8), (nz * 255.0).astype(np.uint8)
+        normal_map = Image.fromarray(np.stack([r, g, b, np.full_like(r, 255)], axis=2))
+        self.internal_save_img(normal_map, os.path.join(dest, f"{name}_n{ext}"), False)
 
     def ui_single_tex(self):
         path = filedialog.askopenfilename()
@@ -629,30 +741,38 @@ class BZReduxSuite(ctk.CTk):
         except Exception as e: 
             self.log_msg(self.tex_log, f"ERROR: {e}")
 
-    def ui_batch_tex(self):
-        src_folder = filedialog.askdirectory(title="Select Source Folder")
-        if not src_folder: return
-        
+    def ui_batch_tex(self, src_folder):
+        """Thread-safe batch processing with progress updates"""
         out_dir = self.tex_batch_out.get()
         if out_dir == "[Same as Source]": 
             out_dir = None
         
         from_filter = self.tex_from_ext.get().lower()
-        count = 0
         
-        for file in os.listdir(src_folder):
-            ext = os.path.splitext(file)[1].lower()
-            if from_filter != "all supported" and ext != from_filter:
-                continue
-            
-            if ext in [".png", ".tga", ".dds", ".jpg", ".bmp"]:
-                try:
-                    self.process_texture(os.path.join(src_folder, file), out_dir)
-                    count += 1
-                except Exception as e:
-                    self.log_msg(self.tex_log, f"Skip {file}: {e}")
+        # Identify valid files
+        supported = [".png", ".tga", ".dds", ".jpg", ".bmp"]
+        files = [f for f in os.listdir(src_folder) if os.path.splitext(f)[1].lower() in supported]
+        
+        if from_filter != "all supported":
+            files = [f for f in files if os.path.splitext(f)[1].lower() == from_filter]
+        
+        total = len(files)
+        if total == 0:
+            self.after(0, lambda: self.log_msg(self.tex_log, "No matching files found."))
+            return
+
+        count = 0
+        for file in files:
+            try:
+                msg = self.process_texture(os.path.join(src_folder, file), out_dir)
+                count += 1
+                # Schedule UI updates on the main thread
+                progress = count / total
+                self.after(0, lambda m=msg, p=progress: (self.log_msg(self.tex_log, m), self.tex_progress.set(p)))
+            except Exception as e:
+                self.after(0, lambda f=file, err=e: self.log_msg(self.tex_log, f"Skip {f}: {err}"))
                     
-        self.log_msg(self.tex_log, f"BATCH COMPLETE: {count} textures processed.")
+        self.after(0, lambda c=count: self.log_msg(self.tex_log, f"BATCH COMPLETE: {c} textures processed."))
 
 if __name__ == "__main__":
     app = BZReduxSuite()
