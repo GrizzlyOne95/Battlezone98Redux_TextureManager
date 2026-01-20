@@ -10,8 +10,8 @@ The ACT Editor is purpose-built for the Battlezone `.ACT` format (256-color inde
 * **Reserved Index Awareness**: Instant access and labeling for key indices:
     * **Index 223**: Skybox color and Sniperscope lens tint.
     * **Index 209**: Global Fog color (horizon transition).
-    * **Indices 0-95 / 224-255**: Primary and Secondary Object ranges.
-    * **Indices 96-222**: Planet-specific terrain smoothing range.
+    * **Indices 0-95 / 224-255**: Primary and Secondary Object ranges. These seem to be ignored by Redux.
+    * **Indices 96-222**: Planet-specific terrain smoothing range. These seem to be ignored by Redux.
 * **Visual Feedback**: Selected colors are highlighted in a 16x16 grid with real-time RGB and Hex editing.
 * **Sync Logic**: Changes to the palette automatically update the preview in the MAP Converter tab.
 
