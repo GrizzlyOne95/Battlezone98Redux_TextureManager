@@ -66,18 +66,17 @@ Download the latest `BZR Texture Manager.exe` from the Releases section. No Pyth
 ### For Developers
 If you wish to run from source or modify the tool:
 
-For Developers
-If you wish to run from source or modify the tool:
-
 ## 1. Clone the repo:
    git clone https://github.com/YourUsername/Battlezone98Redux_TextureManager.git
 
 ## 2. Install dependencies:
    pip install customtkinter Pillow numpy imageio imageio[freeimage]
 
-## 3. Run the application:
+## 3. Download texconv.exe from Microsoft's DirectXTex GitHub. Place texconv.exe in the root folder before running or building.
+
+## 4. Run the application:
    python tex_man.py
 
-## 4. Build command:
+## 5. Build command:
    python -m PyInstaller --noconfirm --onefile --windowed --name "BZR Texture Manager" --icon "bzrtex.ico" --add-data "bzrtex.ico;." --collect-all customtkinter --copy-metadata imageio tex_man.py
 
