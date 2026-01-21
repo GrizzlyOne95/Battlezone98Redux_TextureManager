@@ -1,4 +1,4 @@
-import os, struct, math
+import os, struct, math, sys, subprocess
 import customtkinter as ctk
 from tkinter import filedialog, messagebox, colorchooser
 from PIL import Image
@@ -65,7 +65,15 @@ BUILTIN_MOON_PALETTE = [
     (15, 0, 0), (255, 255, 0), (164, 164, 0), (127, 127, 0), (80, 80, 0),
     (64, 64, 0), (255, 0, 255)
 ]
-
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+    
 class BZReduxSuite(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -705,15 +713,60 @@ class BZReduxSuite(ctk.CTk):
         if self.gen_normal.get(): self.internal_gen_normal(img, dest_dir, file_no_ext, target_ext)
         
         self.internal_save_img(img, out_path, has_alpha)
-        return f"Done: {file_no_ext} ({w}x{h}) -> {target_ext}"
-
+        return f"Done: {file_no_ext} ({w}x{h}) -> {target_ext}"  
+        
     # --- INTERNAL UTILITIES ---
     def internal_save_img(self, img, out_path, has_alpha):
         if out_path.lower().endswith(".dds"):
-            codec = "DXT5" if has_alpha else "DXT1"
-            if not self.tex_compress.get(): codec = None
-            iio.imwrite(out_path, np.array(img), format="DDS", codec=codec, mipmaps=self.tex_mips.get())
+            # 1. Save a temp TGA (Lossless, handles alpha well)
+            temp_tga = out_path.replace(".dds", "_temp.tga")
+            img.save(temp_tga)
+            
+            # 2. Determine compression format
+            # BC1 = DXT1 (No alpha), BC3 = DXT5 (Smooth alpha)
+            fmt = "BC3_UNORM" if has_alpha else "BC1_UNORM"
+            
+            # 3. Setup texconv command
+            # -m 0: Generate full mipmap chain
+            # -y: Overwrite existing
+            # -f: Pixel format
+            texconv_bin = resource_path("texconv.exe")
+            
+            cmd = [
+                texconv_bin,
+                "-f", fmt,
+                "-y",
+                "-o", os.path.dirname(out_path),
+                temp_tga
+            ]
+            
+            # Handle mipmap setting from your UI
+            if self.tex_mips.get():
+                cmd.extend(["-m", "0"]) # Full chain
+            else:
+                cmd.extend(["-m", "1"]) # Single level
+                
+            try:
+                # Hide the console window when running the subprocess
+                startupinfo = None
+                if os.name == 'nt':
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                
+                subprocess.run(cmd, check=True, startupinfo=startupinfo, capture_output=True)
+                
+                # texconv creates [filename].dds. If we saved temp as [name]_temp.tga, 
+                # it creates [name]_temp.dds. Rename it to the final out_path.
+                generated_dds = temp_tga.replace(".tga", ".dds")
+                if os.path.exists(generated_dds):
+                    if os.path.exists(out_path): os.remove(out_path)
+                    os.rename(generated_dds, out_path)
+                    
+            finally:
+                if os.path.exists(temp_tga): os.remove(temp_tga)
+                
         else:
+            # Standard save for non-DDS files
             img.save(out_path)
 
     def internal_gen_emissive(self, img, dest, name, ext):
@@ -752,38 +805,38 @@ class BZReduxSuite(ctk.CTk):
         except Exception as e: 
             self.log_msg(self.tex_log, f"ERROR: {e}")
 
-    def ui_batch_tex(self, src_folder):
-        """Thread-safe batch processing with progress updates"""
-        out_dir = self.tex_batch_out.get()
-        if out_dir == "[Same as Source]": 
-            out_dir = None
+    # def ui_batch_tex(self, src_folder):
+        # """Thread-safe batch processing with progress updates"""
+        # out_dir = self.tex_batch_out.get()
+        # if out_dir == "[Same as Source]": 
+            # out_dir = None
         
-        from_filter = self.tex_from_ext.get().lower()
+        # from_filter = self.tex_from_ext.get().lower()
         
-        # Identify valid files
-        supported = [".png", ".tga", ".dds", ".jpg", ".bmp"]
-        files = [f for f in os.listdir(src_folder) if os.path.splitext(f)[1].lower() in supported]
+        # # Identify valid files
+        # supported = [".png", ".tga", ".dds", ".jpg", ".bmp"]
+        # files = [f for f in os.listdir(src_folder) if os.path.splitext(f)[1].lower() in supported]
         
-        if from_filter != "all supported":
-            files = [f for f in files if os.path.splitext(f)[1].lower() == from_filter]
+        # if from_filter != "all supported":
+            # files = [f for f in files if os.path.splitext(f)[1].lower() == from_filter]
         
-        total = len(files)
-        if total == 0:
-            self.after(0, lambda: self.log_msg(self.tex_log, "No matching files found."))
-            return
+        # total = len(files)
+        # if total == 0:
+            # self.after(0, lambda: self.log_msg(self.tex_log, "No matching files found."))
+            # return
 
-        count = 0
-        for file in files:
-            try:
-                msg = self.process_texture(os.path.join(src_folder, file), out_dir)
-                count += 1
-                # Schedule UI updates on the main thread
-                progress = count / total
-                self.after(0, lambda m=msg, p=progress: (self.log_msg(self.tex_log, m), self.tex_progress.set(p)))
-            except Exception as e:
-                self.after(0, lambda f=file, err=e: self.log_msg(self.tex_log, f"Skip {f}: {err}"))
+        # count = 0
+        # for file in files:
+            # try:
+                # msg = self.process_texture(os.path.join(src_folder, file), out_dir)
+                # count += 1
+                # # Schedule UI updates on the main thread
+                # progress = count / total
+                # self.after(0, lambda m=msg, p=progress: (self.log_msg(self.tex_log, m), self.tex_progress.set(p)))
+            # except Exception as e:
+                # self.after(0, lambda f=file, err=e: self.log_msg(self.tex_log, f"Skip {f}: {err}"))
                     
-        self.after(0, lambda c=count: self.log_msg(self.tex_log, f"BATCH COMPLETE: {c} textures processed."))
+        # self.after(0, lambda c=count: self.log_msg(self.tex_log, f"BATCH COMPLETE: {c} textures processed."))
 
 if __name__ == "__main__":
     app = BZReduxSuite()
