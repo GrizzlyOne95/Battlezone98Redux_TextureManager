@@ -60,8 +60,10 @@ A tool to convert proprietary BZ2 encoded textures to PNG or DDS.
 * **DXTBZ2 to DDS**
 * **DXTBZ2 to PNG**
 * **Single or Batch Processing**
+* **Thanks to VEARIE for the DXTBZ2 direct python code!**
 
-<img width="1152" height="932" alt="image" src="https://github.com/user-attachments/assets/32d3b185-30d1-4867-805c-4e5704dc1088" />
+<img width="1152" height="932" alt="image" src="https://github.com/user-attachments/assets/7a0372f8-aea8-4fc1-9181-9dfe072af651" />
+
 
 ---
 
