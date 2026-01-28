@@ -55,6 +55,13 @@ A dedicated tool for converting `.LGT` lightmap files into editable `.PNG` image
 
  <img width="1152" height="932" alt="image" src="https://github.com/user-attachments/assets/8ac91ad6-9bcd-4d4d-ad15-c96b431a160e" />
 
+### DXTBZ2 Texture Converter
+A tool to convert proprietary BZ2 encoded textures to PNG or DDS. 
+* **DXTBZ2 to DDS**
+* **DXTBZ2 to PNG**
+* **Single or Batch Processing**
+
+<img width="1152" height="932" alt="image" src="https://github.com/user-attachments/assets/32d3b185-30d1-4867-805c-4e5704dc1088" />
 
 ---
 
