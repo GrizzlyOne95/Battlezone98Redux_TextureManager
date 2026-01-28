@@ -5,6 +5,15 @@ from PIL import Image
 import imageio.v3 as iio
 import numpy as np
 import threading
+from ctypes import Structure, c_uint32, c_int, c_uint, c_ubyte
+
+class DXTBZ2Header(Structure):
+    _fields_ = [
+        ("m_Sig", c_int), ("m_DXTLevel", c_int),
+        ("m_1x1Red", c_ubyte), ("m_1x1Green", c_ubyte),
+        ("m_1x1Blue", c_ubyte), ("m_1x1Alpha", c_ubyte),
+        ("m_NumMips", c_int), ("m_BaseHeight", c_int), ("m_BaseWidth", c_int)
+    ]
 
 # --- BZ98 ENGINE CONSTANTS ---
 ZONE_RES = 256  # Redux Standard (256x256 per zone)
@@ -77,7 +86,7 @@ def resource_path(relative_path):
 class BZReduxSuite(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("BZ98 Redux Ultimate Mod Suite")
+        self.title("Battlezone Texture Manager")
         self.geometry("1150x900")
         ctk.set_appearance_mode("dark")
         
@@ -92,6 +101,7 @@ class BZReduxSuite(ctk.CTk):
         self.tab_tex = self.tabview.add("Texture Manager")
         self.tab_map = self.tabview.add("MAP Converter")
         self.tab_lgt = self.tabview.add("LGT Converter")
+        self.tab_dxt = self.tabview.add("DXTBZ2 Converter")
         
         # New Generation Variables
         self.gen_emissive = ctk.BooleanVar(value=False)
@@ -112,6 +122,7 @@ class BZReduxSuite(ctk.CTk):
         self.setup_texture_tab()
         self.setup_map_tab()
         self.setup_lgt_tab()
+        self.setup_dxt_tab()
 
     def log_msg(self, textbox, message):
         textbox.insert("end", f"> {message}\n")
@@ -119,7 +130,7 @@ class BZReduxSuite(ctk.CTk):
 
 # --- ACT PALETTE EDITOR ---
     def setup_act_tab(self):
-        ctk.CTkLabel(self.tab_act, text="Battlezone Palette Editor (.ACT)", font=("Arial", 20, "bold")).pack(pady=10)
+        ctk.CTkLabel(self.tab_act, text="Battlezone 98 Palette Editor (.ACT)", font=("Arial", 20, "bold")).pack(pady=10)
         
         main_f = ctk.CTkFrame(self.tab_act)
         main_f.pack(pady=10, padx=20, fill="both", expand=True)
@@ -804,6 +815,116 @@ class BZReduxSuite(ctk.CTk):
             self.log_msg(self.tex_log, msg)
         except Exception as e: 
             self.log_msg(self.tex_log, f"ERROR: {e}")
+            
+    def setup_dxt_tab(self):
+        ctk.CTkLabel(self.tab_dxt, text="DXTBZ2 Texture Converter", font=("Arial", 20, "bold")).pack(pady=10)
+        
+        # --- Settings Frame ---
+        ctrl = ctk.CTkFrame(self.tab_dxt)
+        ctrl.pack(pady=10, padx=20, fill="x")
+
+        # Format Selection
+        ctk.CTkLabel(ctrl, text="Output Format:").grid(row=0, column=0, padx=10, pady=10)
+        self.dxt_out_ext = ctk.StringVar(value=".dds")
+        ctk.CTkOptionMenu(ctrl, variable=self.dxt_out_ext, values=[".dds", ".png"]).grid(row=0, column=1, padx=10)
+
+        # Standard Options (Linked to your existing logic)
+        self.dxt_mips = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(ctrl, text="Gen Mipmaps (DDS only)", variable=self.dxt_mips).grid(row=1, column=0, padx=20, pady=5)
+        
+        self.dxt_overwrite = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(ctrl, text="Overwrite Existing", variable=self.dxt_overwrite).grid(row=1, column=1, padx=20, pady=5)
+
+        # --- Action Buttons ---
+        btn_f = ctk.CTkFrame(self.tab_dxt)
+        btn_f.pack(pady=10)
+        ctk.CTkButton(btn_f, text="+ Convert Single .dxtbz2", fg_color="#2980b9", command=self.ui_single_dxt).pack(side="left", padx=10)
+        ctk.CTkButton(btn_f, text="+ Batch Folder", fg_color="#8e44ad", command=self.ui_batch_dxt).pack(side="left", padx=10)
+
+        self.dxt_log = ctk.CTkTextbox(self.tab_dxt, height=400)
+        self.dxt_log.pack(padx=20, pady=10, fill="both")
+
+    def process_dxtbz2(self, path):
+        """Converts dxtbz2 to a temp DDS, then uses internal_save_img for final compression/format"""
+        base_name = os.path.basename(path)
+        file_no_ext = os.path.splitext(base_name)[0]
+        out_ext = self.dxt_out_ext.get()
+        final_out = os.path.join(os.path.dirname(path), file_no_ext + out_ext)
+
+        if os.path.exists(final_out) and not self.dxt_overwrite.get():
+            return f"Skipped: {file_no_ext}{out_ext} exists."
+
+        with open(path, "rb") as f:
+            header = DXTBZ2Header()
+            f.readinto(header)
+            
+            # Read chunk size for the first mip
+            size_raw = f.read(4)
+            if not size_raw: return "Error: Empty file"
+            chunk_size = struct.unpack("I", size_raw)[0]
+            
+            # Check for alpha based on data density
+            has_alpha = chunk_size // header.m_BaseHeight == header.m_BaseWidth
+            
+            # Extract raw DXT data
+            raw_data = f.read(chunk_size)
+            
+        # To use your existing PIL/texconv pipeline, we temporarily wrap this in a basic DDS
+        temp_dds = path + ".tmp.dds"
+        self.internal_wrap_dxt_to_dds(temp_dds, header, raw_data, has_alpha)
+
+        try:
+            # Open the wrapped DDS as a PIL image
+            with Image.open(temp_dds) as img:
+                # Use your existing texture processor logic for compression/mips/format
+                # Temporarily override UI variables to match this tab's settings
+                old_mips = self.tex_mips.get()
+                self.tex_mips.set(self.dxt_mips.get())
+                
+                self.internal_save_img(img, final_out, has_alpha)
+                
+                self.tex_mips.set(old_mips) # Restore global state
+        finally:
+            if os.path.exists(temp_dds): os.remove(temp_dds)
+
+        return f"Converted: {file_no_ext} -> {out_ext}"
+
+    def internal_wrap_dxt_to_dds(self, out_path, header, data, has_alpha):
+        """Minimal DDS wrapper to make raw DXT data readable by PIL"""
+        with open(out_path, "wb") as f:
+            f.write(b"DDS ")
+            # Basic Header
+            f.write(struct.pack("<IIIIIII 11I", 124, 0x1|0x2|0x4|0x1000, header.m_BaseHeight, header.m_BaseWidth, 0, 0, 1, *[0]*11))
+            # Pixel Format (DXT1 or DXT5)
+            fourcc = b"DXT5" if has_alpha else b"DXT1"
+            f.write(struct.pack("<II4sIIIII", 32, 0x4, fourcc, 0, 0, 0, 0, 0))
+            # Caps
+            f.write(struct.pack("<IIII I", 0x1000, 0, 0, 0, 0))
+            f.write(data)
+
+    def ui_single_dxt(self):
+        path = filedialog.askopenfilename(filetypes=[("Legacy Texture", "*.dxtbz2")])
+        if not path: return
+        try:
+            msg = self.process_dxtbz2(path)
+            self.log_msg(self.dxt_log, msg)
+        except Exception as e:
+            self.log_msg(self.dxt_log, f"ERROR: {e}")
+
+    def ui_batch_dxt(self):
+        folder = filedialog.askdirectory()
+        if not folder: return
+        
+        def run_batch():
+            files = [f for f in os.listdir(folder) if f.lower().endswith(".dxtbz2")]
+            for f in files:
+                try:
+                    msg = self.process_dxtbz2(os.path.join(folder, f))
+                    self.after(0, lambda m=msg: self.log_msg(self.dxt_log, m))
+                except: pass
+            self.after(0, lambda: self.log_msg(self.dxt_log, "Batch Finished."))
+            
+        threading.Thread(target=run_batch, daemon=True).start()
 
     # def ui_batch_tex(self, src_folder):
         # """Thread-safe batch processing with progress updates"""
