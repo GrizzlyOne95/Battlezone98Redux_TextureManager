@@ -1,11 +1,17 @@
-import os, struct, math, sys, subprocess
-import customtkinter as ctk
-from tkinter import filedialog, messagebox, colorchooser
-from PIL import Image
+import os, struct, math, sys, subprocess, ctypes, json
+import tkinter as tk
+from tkinter import filedialog, messagebox, colorchooser, ttk
+from PIL import Image, ImageTk
 import imageio.v3 as iio
 import numpy as np
 import threading
 from ctypes import Structure, c_uint32, c_int, c_uint, c_ubyte
+
+try:
+    from tkinterdnd2 import DND_FILES, TkinterDnD
+    HAS_DND = True
+except ImportError:
+    HAS_DND = False
 
 class DXTBZ2Header(Structure):
     _fields_ = [
@@ -17,6 +23,15 @@ class DXTBZ2Header(Structure):
 
 # --- BZ98 ENGINE CONSTANTS ---
 ZONE_RES = 256  # Redux Standard (256x256 per zone)
+
+# --- BATTLEZONE HUD COLORS ---
+BZ_BG = "#0a0a0a"
+BZ_FG = "#d4d4d4"
+BZ_GREEN = "#00ff00"
+BZ_DARK_GREEN = "#004400"
+BZ_CYAN = "#00ffff"
+
+CONFIG_FILE = "tex_man_config.json"
 
 class BZMapFormat:
     INDEXED, ARGB4444, RGB565, ARGB8888, XRGB8888 = 0, 1, 2, 3, 4
@@ -82,47 +97,167 @@ def resource_path(relative_path):
     except Exception:
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
+
+class ToolTip:
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tip_window = None
+        widget.bind("<Enter>", self.show_tip)
+        widget.bind("<Leave>", self.hide_tip)
+
+    def show_tip(self, event=None):
+        x = self.widget.winfo_rootx() + 25
+        y = self.widget.winfo_rooty() + 20
+        self.tip_window = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        label = tk.Label(tw, text=self.text, justify='left',
+                       background="#1a1a1a", foreground=BZ_CYAN, 
+                       relief='solid', borderwidth=1, font=("Consolas", "9"))
+        label.pack(ipadx=1)
+
+    def hide_tip(self, event=None):
+        if self.tip_window:
+            self.tip_window.destroy()
+            self.tip_window = None
     
-class BZReduxSuite(ctk.CTk):
-    def __init__(self):
-        super().__init__()
-        self.title("Battlezone Texture Manager")
-        self.geometry("1150x900")
-        ctk.set_appearance_mode("dark")
+class BZReduxSuite:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Battlezone Texture Manager")
+        self.root.geometry("1150x900")
+        self.root.configure(bg=BZ_BG)
         
+        # --- RESOURCES ---
+        if getattr(sys, 'frozen', False):
+            self.base_dir = os.path.dirname(sys.executable)
+            self.resource_dir = sys._MEIPASS
+        else:
+            self.base_dir = os.path.dirname(os.path.abspath(__file__))
+            self.resource_dir = self.base_dir
+            
+        font_path = os.path.join(self.resource_dir, "bzone.ttf")
+        if not os.path.exists(font_path):
+            font_path = os.path.join(os.path.dirname(self.base_dir), "bzone.ttf")
+            
+        if os.path.exists(font_path):
+            self.custom_font_name = "BZONE"
+            try: ctypes.windll.gdi32.AddFontResourceExW(font_path, 0x10, 0)
+            except: pass
+        else:
+            self.custom_font_name = "Consolas"
+            
+        icon_path = os.path.join(self.resource_dir, "bzrtex.ico")
+        if not os.path.exists(icon_path):
+            icon_path = os.path.join(os.path.dirname(self.base_dir), "bzrtex.ico")
+            
+        if os.path.exists(icon_path):
+            try: self.root.iconbitmap(icon_path)
+            except: pass
+
+        self.setup_styles()
+        
+        self.config = self.load_config()
         # Load the Moon Palette as default
         self.palette = [list(c) for c in BUILTIN_MOON_PALETTE]
         self.pal_buttons = []
+        self.selected_index = None
         
-        self.tabview = ctk.CTkTabview(self)
-        self.tabview.pack(padx=10, pady=10, fill="both", expand=True)
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(padx=10, pady=10, fill="both", expand=True)
         
-        self.tab_act = self.tabview.add("ACT Palette Editor")
-        self.tab_tex = self.tabview.add("Texture Manager")
-        self.tab_map = self.tabview.add("MAP Converter")
-        self.tab_lgt = self.tabview.add("LGT Converter")
-        self.tab_dxt = self.tabview.add("DXTBZ2 Converter")
+        self.tab_act = ttk.Frame(self.notebook)
+        self.tab_tex = ttk.Frame(self.notebook)
+        self.tab_map = ttk.Frame(self.notebook)
+        self.tab_lgt = ttk.Frame(self.notebook)
+        self.tab_dxt = ttk.Frame(self.notebook)
+        self.tab_pack = ttk.Frame(self.notebook)
+        
+        self.notebook.add(self.tab_act, text="ACT Palette Editor")
+        self.notebook.add(self.tab_tex, text="Texture Manager")
+        self.notebook.add(self.tab_map, text="MAP Converter")
+        self.notebook.add(self.tab_lgt, text="LGT Converter")
+        self.notebook.add(self.tab_dxt, text="DXTBZ2 Converter")
+        self.notebook.add(self.tab_pack, text="Channel Packer")
         
         # New Generation Variables
-        self.gen_emissive = ctk.BooleanVar(value=False)
-        self.emissive_thresh = ctk.IntVar(value=200)
-        self.gen_specular = ctk.BooleanVar(value=False)
-        self.spec_contrast = ctk.DoubleVar(value=1.5)
-        self.gen_normal = ctk.BooleanVar(value=False)
-        self.norm_strength = ctk.DoubleVar(value=2.0)
-        self.norm_flip_y = ctk.BooleanVar(value=False) # Optional: Toggle for DX/GL compatibility
+        self.gen_emissive = tk.BooleanVar(value=self.config.get("gen_emissive", False))
+        self.emissive_thresh = tk.IntVar(value=self.config.get("emissive_thresh", 200))
+        self.gen_specular = tk.BooleanVar(value=self.config.get("gen_specular", False))
+        self.spec_contrast = tk.DoubleVar(value=self.config.get("spec_contrast", 1.5))
+        self.gen_normal = tk.BooleanVar(value=self.config.get("gen_normal", False))
+        self.norm_strength = tk.DoubleVar(value=self.config.get("norm_strength", 2.0))
+        self.norm_flip_y = tk.BooleanVar(value=self.config.get("norm_flip_y", False))
         
         # Existing Logic Variables
-        self.tex_scale_cutoff = ctk.StringVar(value="Disabled")
-        self.tex_auto_alpha = ctk.BooleanVar(value=True)
-        self.tex_batch_out = ctk.StringVar(value="[Same as Source]")
-        self.tex_from_ext = ctk.StringVar(value="all supported")
+        self.tex_scale_cutoff = tk.StringVar(value=self.config.get("tex_scale_cutoff", "Disabled"))
+        self.tex_auto_alpha = tk.BooleanVar(value=self.config.get("tex_auto_alpha", True))
+        self.tex_batch_out = tk.StringVar(value=self.config.get("tex_batch_out", "[Same as Source]"))
+        self.tex_from_ext = tk.StringVar(value=self.config.get("tex_from_ext", "all supported"))
+        
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.setup_act_tab()
         self.setup_texture_tab()
         self.setup_map_tab()
         self.setup_lgt_tab()
         self.setup_dxt_tab()
+        self.setup_pack_tab()
+
+    def load_config(self):
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, 'r') as f: return json.load(f)
+            except: pass
+        return {}
+
+    def save_config(self):
+        cfg = {
+            "gen_emissive": self.gen_emissive.get(),
+            "emissive_thresh": self.emissive_thresh.get(),
+            "gen_specular": self.gen_specular.get(),
+            "spec_contrast": self.spec_contrast.get(),
+            "gen_normal": self.gen_normal.get(),
+            "norm_strength": self.norm_strength.get(),
+            "norm_flip_y": self.norm_flip_y.get(),
+            "tex_scale_cutoff": self.tex_scale_cutoff.get(),
+            "tex_auto_alpha": self.tex_auto_alpha.get(),
+            "tex_batch_out": self.tex_batch_out.get(),
+            "tex_from_ext": self.tex_from_ext.get()
+        }
+        try:
+            with open(CONFIG_FILE, 'w') as f: json.dump(cfg, f, indent=4)
+        except: pass
+
+    def on_close(self):
+        self.save_config()
+        self.root.destroy()
+
+    def setup_styles(self):
+        style = ttk.Style()
+        style.theme_use('default')
+        main_font = (self.custom_font_name, 10)
+        bold_font = (self.custom_font_name, 11, "bold")
+
+        # --- GLOBAL STYLES ---
+        style.configure(".", background=BZ_BG, foreground=BZ_FG, font=main_font, bordercolor=BZ_DARK_GREEN)
+        style.configure("TFrame", background=BZ_BG)
+        style.configure("TNotebook", background=BZ_BG, borderwidth=0)
+        style.configure("TNotebook.Tab", background="#1a1a1a", foreground=BZ_FG, padding=[10, 2])
+        style.map("TNotebook.Tab", background=[("selected", BZ_DARK_GREEN)], foreground=[("selected", BZ_GREEN)])
+        style.configure("TLabelframe", background=BZ_BG, bordercolor=BZ_GREEN)
+        style.configure("TLabelframe.Label", background=BZ_BG, foreground=BZ_GREEN, font=bold_font)
+        style.configure("TLabel", background=BZ_BG, foreground=BZ_FG)
+        style.configure("TEntry", fieldbackground="#1a1a1a", foreground=BZ_CYAN, insertcolor=BZ_GREEN)
+        style.configure("TButton", background="#1a1a1a", foreground=BZ_FG)
+        style.map("TButton", background=[("active", BZ_DARK_GREEN)], foreground=[("active", BZ_GREEN)])
+        style.configure("Success.TButton", foreground=BZ_GREEN, font=bold_font)
+        style.configure("Action.TButton", foreground=BZ_CYAN, font=bold_font)
+        style.configure("TCheckbutton", background=BZ_BG, foreground=BZ_FG, indicatorcolor=BZ_BG, indicatoron=True)
+        style.map("TCheckbutton", indicatorcolor=[("selected", BZ_GREEN)])
+        style.configure("TCombobox", fieldbackground="#1a1a1a", foreground=BZ_CYAN, arrowcolor=BZ_GREEN)
+        style.map("TCombobox", fieldbackground=[("readonly", "#1a1a1a")], foreground=[("readonly", BZ_CYAN)])
 
     def log_msg(self, textbox, message):
         textbox.insert("end", f"> {message}\n")
@@ -130,54 +265,56 @@ class BZReduxSuite(ctk.CTk):
 
 # --- ACT PALETTE EDITOR ---
     def setup_act_tab(self):
-        ctk.CTkLabel(self.tab_act, text="Battlezone 98 Palette Editor (.ACT)", font=("Arial", 20, "bold")).pack(pady=10)
+        ttk.Label(self.tab_act, text="Battlezone 98 Palette Editor (.ACT)", font=(self.custom_font_name, 16, "bold"), foreground=BZ_GREEN).pack(pady=10)
         
-        main_f = ctk.CTkFrame(self.tab_act)
+        main_f = ttk.Frame(self.tab_act)
         main_f.pack(pady=10, padx=20, fill="both", expand=True)
 
         # 1. Left: The 16x16 Grid
-        grid_f = ctk.CTkFrame(main_f)
+        grid_f = ttk.Frame(main_f)
         grid_f.pack(side="left", padx=20, pady=20)
         
         self.pal_buttons = []
         for i in range(256):
             r, g, b = self.palette[i]
-            btn = ctk.CTkButton(grid_f, text="", width=25, height=25, 
-                                fg_color=f"#{r:02x}{g:02x}{b:02x}",
-                                hover_color="#ffffff",
+            # Using standard tk.Button for background color support
+            btn = tk.Button(grid_f, text="", width=2, height=1, 
+                                bg=f"#{r:02x}{g:02x}{b:02x}",
+                                relief="flat",
                                 command=lambda x=i: self.select_palette_color(x))
             btn.grid(row=i // 16, column=i % 16, padx=1, pady=1)
             self.pal_buttons.append(btn)
 
         # 2. Middle: Quick Jump Shortcuts (Fixed width/height arguments)
-        jump_f = ctk.CTkFrame(main_f, width=140)
+        jump_f = ttk.Frame(main_f, width=140)
         jump_f.pack(side="left", padx=10, fill="y", pady=20)
-        ctk.CTkLabel(jump_f, text="Quick Jump", font=("Arial", 12, "bold")).pack(pady=10)
+        ttk.Label(jump_f, text="Quick Jump", font=(self.custom_font_name, 12, "bold")).pack(pady=10)
         
-        ctk.CTkButton(jump_f, text="Index 209\n(Fog)", fg_color="#5d6d7e", height=50, width=100,
+        # Using tk.Button for specific colors
+        tk.Button(jump_f, text="Index 209\n(Fog)", bg="#5d6d7e", fg="white", width=12, height=3,
                       command=lambda: self.jump_to_index(209)).pack(pady=5, padx=10)
         
-        ctk.CTkButton(jump_f, text="Index 223\n(Sky/Scope)", fg_color="#d4ac0d", text_color="black", height=50, width=100,
+        tk.Button(jump_f, text="Index 223\n(Sky/Scope)", bg="#d4ac0d", fg="black", width=12, height=3,
                       command=lambda: self.jump_to_index(223)).pack(pady=5, padx=10)
         
-        ctk.CTkLabel(jump_f, text="Ranges:", font=("Arial", 10, "italic")).pack(pady=(20, 0))
+        ttk.Label(jump_f, text="Ranges:", font=(self.custom_font_name, 10, "italic")).pack(pady=(20, 0))
         
         # Fixed these two buttons specifically:
-        ctk.CTkButton(jump_f, text="Terrain (96)", width=100, height=24, 
+        ttk.Button(jump_f, text="Terrain (96)", width=15, 
                       command=lambda: self.jump_to_index(96)).pack(pady=2)
-        ctk.CTkButton(jump_f, text="Objects (0)", width=100, height=24, 
+        ttk.Button(jump_f, text="Objects (0)", width=15, 
                       command=lambda: self.jump_to_index(0)).pack(pady=2)
 
         # 3. Right: Edit Controls
-        ctrl_f = ctk.CTkFrame(main_f)
+        ctrl_f = ttk.Frame(main_f)
         ctrl_f.pack(side="right", padx=20, fill="y", expand=True)
 
-        self.sel_idx_var = ctk.StringVar(value="Select a Color")
-        self.sel_label = ctk.CTkLabel(ctrl_f, textvariable=self.sel_idx_var, font=("Arial", 16, "bold"))
+        self.sel_idx_var = tk.StringVar(value="Select a Color")
+        self.sel_label = ttk.Label(ctrl_f, textvariable=self.sel_idx_var, font=(self.custom_font_name, 14, "bold"))
         self.sel_label.pack(pady=10)
 
-        self.bz_info_var = ctk.StringVar(value="")
-        ctk.CTkLabel(ctrl_f, textvariable=self.bz_info_var, text_color="#e67e22", wraplength=200).pack()
+        self.bz_info_var = tk.StringVar(value="")
+        ttk.Label(ctrl_f, textvariable=self.bz_info_var, foreground="#e67e22", wraplength=200).pack()
 
         # RGB Sliders
         self.r_val = self.create_color_slider(ctrl_f, "Red", self.update_color_from_sliders)
@@ -185,26 +322,20 @@ class BZReduxSuite(ctk.CTk):
         self.b_val = self.create_color_slider(ctrl_f, "Blue", self.update_color_from_sliders)
 
         # Hex Input
-        ctk.CTkLabel(ctrl_f, text="Hex Code:").pack(pady=(10,0))
-        self.hex_var = ctk.StringVar()
-        self.hex_entry = ctk.CTkEntry(ctrl_f, textvariable=self.hex_var)
+        ttk.Label(ctrl_f, text="Hex Code:").pack(pady=(10,0))
+        self.hex_var = tk.StringVar()
+        self.hex_entry = ttk.Entry(ctrl_f, textvariable=self.hex_var)
         self.hex_entry.pack(pady=5)
-        ctk.CTkButton(ctrl_f, text="Apply Hex", command=self.apply_hex).pack(pady=5)
+        ttk.Button(ctrl_f, text="Apply Hex", command=self.apply_hex).pack(pady=5)
 
         # File Actions
-        ctk.CTkButton(ctrl_f, text="LOAD .ACT", fg_color="#27ae60", command=self.load_act).pack(fill="x", pady=10)
-        ctk.CTkButton(ctrl_f, text="SAVE .ACT", fg_color="#2980b9", command=self.save_act).pack(fill="x")
+        ttk.Button(ctrl_f, text="LOAD .ACT", style="Success.TButton", command=self.load_act).pack(fill="x", pady=10)
+        ttk.Button(ctrl_f, text="SAVE .ACT", style="Action.TButton", command=self.save_act).pack(fill="x")
+        ttk.Button(ctrl_f, text="Import from Image", command=self.import_palette_from_image).pack(fill="x", pady=10)
 
     def jump_to_index(self, idx):
         """Logic to handle the quick jump buttons without crashing"""
         self.select_palette_color(idx)
-        
-        # Visual feedback: Reset all borders, then highlight the selected one
-        for i, btn in enumerate(self.pal_buttons):
-            if i == idx:
-                btn.configure(border_width=2, border_color="white")
-            else:
-                btn.configure(border_width=0)
 
     def select_palette_color(self, idx):
         """Updates UI based on selected palette index"""
@@ -233,7 +364,7 @@ class BZReduxSuite(ctk.CTk):
 
         self.sel_idx_var.set(f"Index: {idx}")
         self.bz_info_var.set(info)
-        self.sel_label.configure(text_color=hint)
+        self.sel_label.configure(foreground=hint)
         
         # Update sliders and Hex entry
         self.r_val.set(r)
@@ -241,16 +372,19 @@ class BZReduxSuite(ctk.CTk):
         self.b_val.set(b)
         self.hex_var.set(f"#{r:02x}{g:02x}{b:02x}")
         
-        # Apply the border highlight here too so clicking the grid works
+        # Visual feedback: Reset all borders, then highlight the selected one
         for i, btn in enumerate(self.pal_buttons):
-            btn.configure(border_width=2 if i == idx else 0, border_color="white")
+            if i == idx:
+                btn.configure(relief="solid", bd=4)
+            else:
+                btn.configure(relief="flat", bd=1)
 
     def update_color_from_sliders(self, _=None):
         if self.selected_index is None: return
         r, g, b = int(self.r_val.get()), int(self.g_val.get()), int(self.b_val.get())
         self.palette[self.selected_index] = [r, g, b]
         hex_code = f"#{r:02x}{g:02x}{b:02x}"
-        self.pal_buttons[self.selected_index].configure(fg_color=hex_code)
+        self.pal_buttons[self.selected_index].configure(bg=hex_code)
         self.hex_var.set(hex_code)
         if hasattr(self, 'update_pal_preview'): self.update_pal_preview()
 
@@ -272,7 +406,7 @@ class BZReduxSuite(ctk.CTk):
                 self.palette = [list(struct.unpack('<3B', raw[i:i+3])) for i in range(0, 768, 3)]
             for i, btn in enumerate(self.pal_buttons):
                 r, g, b = self.palette[i]
-                btn.configure(fg_color=f"#{r:02x}{g:02x}{b:02x}")
+                btn.configure(bg=f"#{r:02x}{g:02x}{b:02x}")
             if hasattr(self, 'update_pal_preview'): self.update_pal_preview()
         except Exception as e: print(f"Load Error: {e}")
 
@@ -285,58 +419,86 @@ class BZReduxSuite(ctk.CTk):
                     f.write(struct.pack('<3B', *color))
         except Exception as e: print(f"Save Error: {e}")
 
+    def import_palette_from_image(self):
+        path = filedialog.askopenfilename(filetypes=[("Image", "*.png;*.bmp;*.gif;*.tif")])
+        if not path: return
+        try:
+            img = Image.open(path)
+            pal_data = []
+            if img.mode == 'P':
+                raw_pal = img.getpalette()
+                # Chunk into RGB triplets
+                pal_data = [raw_pal[i:i+3] for i in range(0, min(len(raw_pal), 768), 3)]
+            else:
+                q_img = img.quantize(colors=256)
+                raw_pal = q_img.getpalette()
+                pal_data = [raw_pal[i:i+3] for i in range(0, min(len(raw_pal), 768), 3)]
+            
+            # Pad if necessary
+            while len(pal_data) < 256: pal_data.append([0,0,0])
+            
+            self.palette = pal_data[:256]
+            for i, btn in enumerate(self.pal_buttons):
+                r, g, b = self.palette[i]
+                btn.configure(bg=f"#{r:02x}{g:02x}{b:02x}")
+            if hasattr(self, 'update_pal_preview'): self.update_pal_preview()
+            messagebox.showinfo("Success", "Palette imported from image.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to import palette: {e}")
+
     def create_color_slider(self, parent, label, cmd):
-        ctk.CTkLabel(parent, text=label).pack()
-        s = ctk.CTkSlider(parent, from_=0, to=255, command=cmd)
-        s.pack(pady=2)
+        ttk.Label(parent, text=label).pack()
+        s = tk.Scale(parent, from_=0, to=255, orient="horizontal", command=cmd,
+                     bg=BZ_BG, fg=BZ_FG, troughcolor="#1a1a1a", activebackground=BZ_GREEN, highlightthickness=0)
+        s.pack(pady=2, fill="x")
         return s
 
 # --- MAP CONVERTER ---
     def setup_map_tab(self):
-        ctk.CTkLabel(self.tab_map, text=".MAP Texture Serializer", font=("Arial", 20, "bold")).pack(pady=10)
+        ttk.Label(self.tab_map, text=".MAP Texture Serializer", font=(self.custom_font_name, 16, "bold"), foreground=BZ_GREEN).pack(pady=10)
         
         # 1. Palette Preview Section
-        preview_frame = ctk.CTkFrame(self.tab_map)
+        preview_frame = ttk.Frame(self.tab_map)
         preview_frame.pack(pady=5, padx=20, fill="x")
-        ctk.CTkLabel(preview_frame, text="Active Palette Preview (0-255):", font=("Arial", 12)).pack(pady=2)
+        ttk.Label(preview_frame, text="Active Palette Preview (0-255):").pack(pady=2)
         
-        self.pal_canvas = ctk.CTkCanvas(preview_frame, height=30, bg="black", highlightthickness=0)
+        self.pal_canvas = tk.Canvas(preview_frame, height=30, bg="black", highlightthickness=0)
         self.pal_canvas.pack(fill="x", padx=10, pady=5)
         self.update_pal_preview() 
 
         # 2. Options Frame (Batch Folder & Scaling)
-        opts = ctk.CTkFrame(self.tab_map)
+        opts = ttk.Frame(self.tab_map)
         opts.pack(pady=10, padx=20, fill="x")
         
         # Output Path
-        self.batch_out_path = ctk.StringVar(value="[Same as Source]")
-        ctk.CTkLabel(opts, text="Batch Output Folder:").grid(row=0, column=0, padx=10, pady=5, sticky="w")
-        ctk.CTkEntry(opts, textvariable=self.batch_out_path, width=400).grid(row=0, column=1, padx=5, pady=5)
-        ctk.CTkButton(opts, text="Browse", width=60, command=self.set_batch_out).grid(row=0, column=2, padx=5)
+        self.batch_out_path = tk.StringVar(value="[Same as Source]")
+        ttk.Label(opts, text="Batch Output Folder:").grid(row=0, column=0, padx=10, pady=5, sticky="w")
+        ttk.Entry(opts, textvariable=self.batch_out_path, width=50).grid(row=0, column=1, padx=5, pady=5)
+        ttk.Button(opts, text="Browse", width=10, command=self.set_batch_out).grid(row=0, column=2, padx=5)
 
         # Scaling Option
-        ctk.CTkLabel(opts, text="Rescale (Batch/Single):").grid(row=1, column=0, padx=10, pady=5, sticky="w")
-        self.map_scale_var = ctk.StringVar(value="No Scaling")
-        ctk.CTkOptionMenu(opts, variable=self.map_scale_var, values=["No Scaling", "128x128", "256x256", "512x512", "1024x1024"]).grid(row=1, column=1, padx=5, sticky="w")
+        ttk.Label(opts, text="Rescale (Batch/Single):").grid(row=1, column=0, padx=10, pady=5, sticky="w")
+        self.map_scale_var = tk.StringVar(value="No Scaling")
+        ttk.Combobox(opts, textvariable=self.map_scale_var, values=["No Scaling", "128x128", "256x256", "512x512", "1024x1024"], state="readonly").grid(row=1, column=1, padx=5, sticky="w")
 
         # 3. Palette Override Section (Restored)
-        pal_opt = ctk.CTkFrame(self.tab_map)
+        pal_opt = ttk.Frame(self.tab_map)
         pal_opt.pack(pady=5, padx=20, fill="x")
         
-        self.custom_pal_path = ctk.StringVar(value="[Built-in Workspace Palette]")
-        ctk.CTkLabel(pal_opt, text="Palette Override:").pack(side="left", padx=10)
-        ctk.CTkEntry(pal_opt, textvariable=self.custom_pal_path, width=350).pack(side="left", padx=5)
-        ctk.CTkButton(pal_opt, text="Load .ACT", width=80, fg_color="#27ae60", command=self.ui_load_override_pal).pack(side="left", padx=5)
-        ctk.CTkButton(pal_opt, text="Reset", width=50, command=self.reset_map_palette).pack(side="left", padx=5)
+        self.custom_pal_path = tk.StringVar(value="[Built-in Workspace Palette]")
+        ttk.Label(pal_opt, text="Palette Override:").pack(side="left", padx=10)
+        ttk.Entry(pal_opt, textvariable=self.custom_pal_path, width=40).pack(side="left", padx=5)
+        ttk.Button(pal_opt, text="Load .ACT", style="Success.TButton", command=self.ui_load_override_pal).pack(side="left", padx=5)
+        ttk.Button(pal_opt, text="Reset", command=self.reset_map_palette).pack(side="left", padx=5)
 
         # 4. Actions Frame
-        f = ctk.CTkFrame(self.tab_map)
+        f = ttk.Frame(self.tab_map)
         f.pack(pady=10, padx=20, fill="x")
         
-        ctk.CTkButton(f, text="+ Single File (MAP/PNG)", fg_color="#2980b9", height=40, command=self.ui_single_map).pack(side="left", padx=10, expand=True, fill="x")
-        ctk.CTkButton(f, text="+ Batch Folder", fg_color="#8e44ad", height=40, command=self.ui_batch_map).pack(side="left", padx=10, expand=True, fill="x")
+        ttk.Button(f, text="+ Single File (MAP/PNG)", style="Action.TButton", command=self.ui_single_map).pack(side="left", padx=10, expand=True, fill="x")
+        ttk.Button(f, text="+ Batch Folder", style="Action.TButton", command=self.ui_batch_map).pack(side="left", padx=10, expand=True, fill="x")
         
-        self.map_log = ctk.CTkTextbox(self.tab_map, height=350)
+        self.map_log = tk.Text(self.tab_map, height=15, bg="#050505", fg=BZ_FG, font=("Consolas", 9))
         self.map_log.pack(padx=20, pady=10, fill="both")
 
     def update_pal_preview(self, custom_palette=None):
@@ -447,23 +609,23 @@ class BZReduxSuite(ctk.CTk):
 
 # --- LGT CONVERTER (STITCHING FIXED) ---
     def setup_lgt_tab(self):
-        ctk.CTkLabel(self.tab_lgt, text="Terrain Lightmap (.LGT) Manager", font=("Arial", 20, "bold")).pack(pady=10)
+        ttk.Label(self.tab_lgt, text="Terrain Lightmap (.LGT) Manager", font=(self.custom_font_name, 16, "bold"), foreground=BZ_GREEN).pack(pady=10)
         
         # Controls Frame
-        ctrl = ctk.CTkFrame(self.tab_lgt)
+        ctrl = ttk.Frame(self.tab_lgt)
         ctrl.pack(pady=10, padx=20, fill="x")
         
-        ctk.CTkLabel(ctrl, text="Map Width (Zones):").grid(row=0, column=0, padx=5)
-        self.lgt_width_var = ctk.StringVar(value="0") # 0 = Auto-Square
-        ctk.CTkEntry(ctrl, textvariable=self.lgt_width_var, width=60).grid(row=0, column=1, padx=5)
-        ctk.CTkLabel(ctrl, text="(Leave 0 for square maps)").grid(row=0, column=2, padx=5)
+        ttk.Label(ctrl, text="Map Width (Zones):").grid(row=0, column=0, padx=5)
+        self.lgt_width_var = tk.StringVar(value="0") # 0 = Auto-Square
+        ttk.Entry(ctrl, textvariable=self.lgt_width_var, width=10).grid(row=0, column=1, padx=5)
+        ttk.Label(ctrl, text="(Leave 0 for square maps)").grid(row=0, column=2, padx=5)
 
-        btn_f = ctk.CTkFrame(self.tab_lgt)
+        btn_f = ttk.Frame(self.tab_lgt)
         btn_f.pack(pady=10)
-        ctk.CTkButton(btn_f, text="+ LGT to PNG (Extract)", fg_color="#2980b9", command=self.lgt_to_png).pack(side="left", padx=10)
-        ctk.CTkButton(btn_f, text="+ PNG to LGT (Pack)", fg_color="#e67e22", command=self.png_to_lgt).pack(side="left", padx=10)
+        ttk.Button(btn_f, text="+ LGT to PNG (Extract)", style="Action.TButton", command=self.lgt_to_png).pack(side="left", padx=10)
+        ttk.Button(btn_f, text="+ PNG to LGT (Pack)", style="Action.TButton", command=self.png_to_lgt).pack(side="left", padx=10)
 
-        self.lgt_log = ctk.CTkTextbox(self.tab_lgt, height=450)
+        self.lgt_log = tk.Text(self.tab_lgt, height=20, bg="#050505", fg=BZ_FG, font=("Consolas", 9))
         self.lgt_log.pack(padx=20, pady=10, fill="both")
 
     def parse_trn_dimensions(self):
@@ -550,93 +712,149 @@ class BZReduxSuite(ctk.CTk):
         except Exception as e: self.log_msg(self.lgt_log, f"ERROR: {e}")
 
     def setup_texture_tab(self):
-        ctk.CTkLabel(self.tab_tex, text="Advanced Texture Processor", font=("Arial", 20, "bold")).pack(pady=10)
+        ttk.Label(self.tab_tex, text="Advanced Texture Processor", font=(self.custom_font_name, 16, "bold"), foreground=BZ_GREEN).pack(pady=10)
         
         # Main container to split controls and log
-        main_content = ctk.CTkFrame(self.tab_tex)
+        main_content = ttk.Frame(self.tab_tex)
         main_content.pack(fill="both", expand=True, padx=10, pady=5)
 
         # Left Column: Format & File Settings
-        left_col = ctk.CTkFrame(main_content)
+        left_col = ttk.Frame(main_content)
         left_col.pack(side="left", fill="both", expand=True, padx=5, pady=5)
 
+        # 0. Source Selection (Single File)
+        src_f = ttk.LabelFrame(left_col, text=" Single File Source ", padding=10)
+        src_f.pack(fill="x", padx=5, pady=5)
+        
+        self.tex_single_path = tk.StringVar()
+        self.tex_single_entry = ttk.Entry(src_f, textvariable=self.tex_single_path)
+        self.tex_single_entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        ttk.Button(src_f, text="Browse", width=8, command=self.browse_single_tex).pack(side="left")
+        
+        if HAS_DND:
+            self.tex_single_entry.drop_target_register(DND_FILES)
+            self.tex_single_entry.dnd_bind('<<Drop>>', self.on_tex_drop)
+
         # 1. Format Options
-        fmt_f = ctk.CTkFrame(left_col)
+        fmt_f = ttk.LabelFrame(left_col, text=" Format Settings ", padding=10)
         fmt_f.pack(fill="x", padx=5, pady=5)
         
-        ctk.CTkLabel(fmt_f, text="Format Settings", font=("Arial", 12, "bold")).grid(row=0, column=0, columnspan=2, pady=5)
-        self.tex_to_ext = ctk.StringVar(value=".dds")
-        ctk.CTkOptionMenu(fmt_f, variable=self.tex_to_ext, values=[".dds", ".png", ".tga"]).grid(row=1, column=1, padx=5, pady=5)
-        ctk.CTkLabel(fmt_f, text="Output Format:").grid(row=1, column=0, padx=5)
+        self.tex_to_ext = tk.StringVar(value=self.config.get("tex_to_ext", ".dds"))
+        self.tex_to_ext.trace_add("write", self.update_tex_ui_state)
+        ttk.Label(fmt_f, text="Output Format:").grid(row=0, column=0, padx=5, sticky="w")
+        ttk.Combobox(fmt_f, textvariable=self.tex_to_ext, values=[".dds", ".png", ".tga"], state="readonly", width=10).grid(row=0, column=1, padx=5, pady=5)
 
-        self.tex_compress = ctk.BooleanVar(value=True)
-        ctk.CTkCheckBox(fmt_f, text="DXT Compression", variable=self.tex_compress).grid(row=2, column=0, padx=5, pady=2)
-        self.tex_mips = ctk.BooleanVar(value=True)
-        ctk.CTkCheckBox(fmt_f, text="Gen Mipmaps", variable=self.tex_mips).grid(row=2, column=1, padx=5, pady=2)
+        ttk.Label(fmt_f, text="Compression:").grid(row=1, column=0, padx=5, sticky="w")
+        self.tex_compress = tk.StringVar(value="Auto")
+        self.tex_compress_combo = ttk.Combobox(fmt_f, textvariable=self.tex_compress, values=["Auto", "DXT1", "DXT5", "None"], state="readonly", width=10)
+        self.tex_compress_combo.grid(row=1, column=1, padx=5, pady=2)
+
+        self.tex_mips = tk.BooleanVar(value=self.config.get("tex_mips", True))
+        self.tex_mips_chk = ttk.Checkbutton(fmt_f, text="Gen Mipmaps", variable=self.tex_mips)
+        self.tex_mips_chk.grid(row=2, column=0, columnspan=2, padx=5, pady=2, sticky="w")
         
         # Add to setup_texture_tab under Format Settings
-        ctk.CTkLabel(fmt_f, text="Rescale if > :").grid(row=4, column=0, padx=5, pady=5)
-        self.tex_scale_cutoff = ctk.StringVar(value="Disabled")
-        ctk.CTkOptionMenu(fmt_f, variable=self.tex_scale_cutoff, 
-                          values=["Disabled", "512", "1024", "2048", "4096"]).grid(row=4, column=1, padx=5, pady=5)
+        ttk.Label(fmt_f, text="Rescale if > :").grid(row=3, column=0, padx=5, pady=5, sticky="w")
+        # self.tex_scale_cutoff loaded in init
+        ttk.Combobox(fmt_f, textvariable=self.tex_scale_cutoff, 
+                          values=["Disabled", "512", "1024", "2048", "4096"], state="readonly", width=10).grid(row=3, column=1, padx=5, pady=5)
         
         # FIX: Moved Overwrite into the format frame using grid to match its siblings
-        self.tex_overwrite = ctk.BooleanVar(value=False) 
-        ctk.CTkCheckBox(fmt_f, text="Overwrite Existing", variable=self.tex_overwrite).grid(row=3, column=0, columnspan=2, padx=10, pady=5, sticky="w")
+        self.tex_overwrite = tk.BooleanVar(value=self.config.get("tex_overwrite", False)) 
+        ttk.Checkbutton(fmt_f, text="Overwrite Existing", variable=self.tex_overwrite).grid(row=4, column=0, columnspan=2, padx=5, pady=5, sticky="w")
 
         # --- Advanced Map Generation Section ---
-        gen_f = ctk.CTkFrame(left_col)
+        gen_f = ttk.LabelFrame(left_col, text=" Map Generation ", padding=10)
         gen_f.pack(pady=5, padx=5, fill="x")
-        ctk.CTkLabel(gen_f, text="Map Generation", font=("Arial", 12, "bold")).pack(pady=5)
 
         # Emissive Row
-        e_f = ctk.CTkFrame(gen_f, fg_color="transparent")
+        e_f = ttk.Frame(gen_f)
         e_f.pack(fill="x", padx=10, pady=2)
-        ctk.CTkCheckBox(e_f, text="Create Emissive", variable=self.gen_emissive).pack(side="left")
-        ctk.CTkLabel(e_f, text="Threshold:").pack(side="right", padx=5)
-        ctk.CTkSlider(e_f, from_=0, to=255, variable=self.emissive_thresh, width=150).pack(side="right")
+        ttk.Checkbutton(e_f, text="Create Emissive", variable=self.gen_emissive).pack(side="left")
+        ttk.Label(e_f, text="Threshold:").pack(side="right", padx=5)
+        tk.Scale(e_f, from_=0, to=255, orient="horizontal", variable=self.emissive_thresh, width=10, length=100,
+                 bg=BZ_BG, fg=BZ_FG, troughcolor="#1a1a1a", activebackground=BZ_GREEN, highlightthickness=0).pack(side="right")
 
         # Specular Row
-        s_f = ctk.CTkFrame(gen_f, fg_color="transparent")
+        s_f = ttk.Frame(gen_f)
         s_f.pack(fill="x", padx=10, pady=2)
-        ctk.CTkCheckBox(s_f, text="Create Specular", variable=self.gen_specular).pack(side="left")
-        ctk.CTkLabel(s_f, text="Contrast:").pack(side="right", padx=5)
-        ctk.CTkSlider(s_f, from_=0.5, to=3.0, variable=self.spec_contrast, width=150).pack(side="right")
+        ttk.Checkbutton(s_f, text="Create Specular", variable=self.gen_specular).pack(side="left")
+        ttk.Label(s_f, text="Contrast:").pack(side="right", padx=5)
+        tk.Scale(s_f, from_=0.5, to=3.0, resolution=0.1, orient="horizontal", variable=self.spec_contrast, width=10, length=100,
+                 bg=BZ_BG, fg=BZ_FG, troughcolor="#1a1a1a", activebackground=BZ_GREEN, highlightthickness=0).pack(side="right")
 
         # Normal Row
-        n_f = ctk.CTkFrame(gen_f, fg_color="transparent")
+        n_f = ttk.Frame(gen_f)
         n_f.pack(fill="x", padx=10, pady=2)
-        ctk.CTkCheckBox(n_f, text="Smart Normal", variable=self.gen_normal).pack(side="left")
-        ctk.CTkCheckBox(n_f, text="Flip Y (DX)", variable=self.norm_flip_y).pack(side="left", padx=20)
-        ctk.CTkLabel(n_f, text="Strength:").pack(side="right", padx=5)
-        ctk.CTkSlider(n_f, from_=0.1, to=10.0, variable=self.norm_strength, width=150).pack(side="right")
+        ttk.Checkbutton(n_f, text="Smart Normal", variable=self.gen_normal).pack(side="left")
+        ttk.Checkbutton(n_f, text="Flip Y (DX)", variable=self.norm_flip_y).pack(side="left", padx=20)
+        ttk.Label(n_f, text="Strength:").pack(side="right", padx=5)
+        tk.Scale(n_f, from_=0.1, to=10.0, resolution=0.1, orient="horizontal", variable=self.norm_strength, width=10, length=100,
+                 bg=BZ_BG, fg=BZ_FG, troughcolor="#1a1a1a", activebackground=BZ_GREEN, highlightthickness=0).pack(side="right")
 
         # 3. Actions & Log (Right Column)
-        right_col = ctk.CTkFrame(main_content)
+        right_col = ttk.Frame(main_content)
         right_col.pack(side="right", fill="both", expand=True, padx=5, pady=5)
         
-        self.tex_log = ctk.CTkTextbox(right_col, height=300)
+        # Preview Canvas
+        self.tex_preview_canvas = tk.Canvas(right_col, bg="#050505", height=200, highlightthickness=0)
+        self.tex_preview_canvas.pack(fill="x", padx=5, pady=5)
+        
+        self.tex_log = tk.Text(right_col, height=15, bg="#050505", fg=BZ_FG, font=("Consolas", 9))
         self.tex_log.pack(fill="both", expand=True, padx=5, pady=5)
 
-        self.tex_progress = ctk.CTkProgressBar(right_col)
-        self.tex_progress.pack(fill="x", padx=5, pady=2)
-        self.tex_progress.set(0)
+        self.tex_progress = ttk.Progressbar(right_col, style="BZ.Horizontal.TProgressbar", mode="determinate")
+        self.tex_progress.pack(fill="x", padx=5, pady=5)
+        # Style for progress bar needs to be defined if not already
+        style = ttk.Style()
+        style.configure("BZ.Horizontal.TProgressbar", thickness=15, background=BZ_GREEN, troughcolor="#050505")
 
-        btn_f = ctk.CTkFrame(right_col)
+        btn_f = ttk.Frame(right_col)
         btn_f.pack(fill="x", pady=5)
-        ctk.CTkButton(btn_f, text="Process Single", command=self.ui_single_tex).pack(side="left", fill="x", expand=True, padx=2)
-        ctk.CTkButton(btn_f, text="Batch Folder", command=self.start_batch_thread, fg_color="#8e44ad").pack(side="left", fill="x", expand=True, padx=2)
+        ttk.Button(btn_f, text="Process Single", command=self.ui_single_tex).pack(side="left", fill="x", expand=True, padx=2)
+        ttk.Button(btn_f, text="Batch Folder", command=self.start_batch_thread, style="Action.TButton").pack(side="left", fill="x", expand=True, padx=2)
         
         # Batch Settings
-        batch_f = ctk.CTkFrame(left_col)
+        batch_f = ttk.LabelFrame(left_col, text=" Batch Settings ", padding=10)
         batch_f.pack(fill="x", padx=5, pady=5)
-        ctk.CTkLabel(batch_f, text="Batch Settings", font=("Arial", 12, "bold")).pack(pady=5)
         
-        self.tex_from_ext = ctk.StringVar(value="all supported")
-        ctk.CTkOptionMenu(batch_f, variable=self.tex_from_ext, values=["all supported", ".png", ".tga", ".dds", ".jpg"]).pack(pady=2)
+        self.tex_from_ext = tk.StringVar(value="all supported")
+        ttk.Combobox(batch_f, textvariable=self.tex_from_ext, values=["all supported", ".png", ".tga", ".dds", ".jpg"], state="readonly").pack(pady=2, fill="x")
         
-        ctk.CTkEntry(batch_f, textvariable=self.tex_batch_out).pack(fill="x", padx=10, pady=2)
-        ctk.CTkButton(batch_f, text="Set Output Folder", command=self.set_tex_batch_out).pack(pady=2)
+        ttk.Entry(batch_f, textvariable=self.tex_batch_out).pack(fill="x", padx=10, pady=2)
+        ttk.Button(batch_f, text="Set Output Folder", command=self.set_tex_batch_out).pack(pady=2, fill="x")
+
+    def browse_single_tex(self):
+        path = filedialog.askopenfilename(filetypes=[("Image", "*.png;*.tga;*.jpg;*.bmp;*.dds")])
+        if path:
+            self.tex_single_path.set(path)
+            self.load_tex_preview(path)
+
+    def on_tex_drop(self, event):
+        path = event.data.strip('{}')
+        self.tex_single_path.set(path)
+        self.load_tex_preview(path)
+
+    def load_tex_preview(self, path):
+        try:
+            img = Image.open(path)
+            # Resize for preview
+            img.thumbnail((300, 200))
+            self.tk_tex_preview = ImageTk.PhotoImage(img)
+            self.tex_preview_canvas.delete("all")
+            cw = self.tex_preview_canvas.winfo_width()
+            ch = self.tex_preview_canvas.winfo_height()
+            self.tex_preview_canvas.create_image(cw//2, ch//2, image=self.tk_tex_preview)
+        except Exception as e:
+            self.log_msg(self.tex_log, f"Preview Error: {e}")
+
+    def update_tex_ui_state(self, *args):
+        if self.tex_to_ext.get() == ".dds":
+            self.tex_compress_combo.configure(state="readonly")
+            self.tex_mips_chk.configure(state="normal")
+        else:
+            self.tex_compress_combo.configure(state="disabled")
+            self.tex_mips_chk.configure(state="disabled")
 
     # --- TEXTURE LOGIC FUNCTIONS ---
     def set_tex_batch_out(self):
@@ -647,7 +865,7 @@ class BZReduxSuite(ctk.CTk):
     def start_batch_thread(self):
         src_folder = filedialog.askdirectory(title="Select Source Folder")
         if not src_folder: return
-        self.tex_progress.set(0)
+        self.tex_progress['value'] = 0
         thread = threading.Thread(target=self.ui_batch_tex, args=(src_folder,), daemon=True)
         thread.start()
 
@@ -668,7 +886,7 @@ class BZReduxSuite(ctk.CTk):
         
         total = len(files)
         if total == 0:
-            self.after(0, lambda: self.log_msg(self.tex_log, "No matching files found."))
+            self.root.after(0, lambda: self.log_msg(self.tex_log, "No matching files found."))
             return
 
         count = 0
@@ -677,12 +895,12 @@ class BZReduxSuite(ctk.CTk):
                 msg = self.process_texture(os.path.join(src_folder, file), out_dir)
                 count += 1
                 # Schedule UI updates on the main thread
-                progress = count / total
-                self.after(0, lambda m=msg, p=progress: (self.log_msg(self.tex_log, m), self.tex_progress.set(p)))
+                progress = (count / total) * 100
+                self.root.after(0, lambda m=msg, p=progress: (self.log_msg(self.tex_log, m), self.tex_progress.configure(value=p)))
             except Exception as e:
-                self.after(0, lambda f=file, err=e: self.log_msg(self.tex_log, f"Skip {f}: {err}"))
+                self.root.after(0, lambda f=file, err=e: self.log_msg(self.tex_log, f"Skip {f}: {err}"))
                     
-        self.after(0, lambda c=count: self.log_msg(self.tex_log, f"BATCH COMPLETE: {c} textures processed."))
+        self.root.after(0, lambda c=count: self.log_msg(self.tex_log, f"BATCH COMPLETE: {c} textures processed."))
 
     def process_texture(self, path, output_folder=None):
         base_name = os.path.basename(path)
@@ -719,9 +937,14 @@ class BZReduxSuite(ctk.CTk):
             if alpha_extrema and alpha_extrema[0] < 255:
                 has_alpha = True
         
-        if self.gen_emissive.get(): self.internal_gen_emissive(img, dest_dir, file_no_ext, target_ext)
-        if self.gen_specular.get(): self.internal_gen_specular(img, dest_dir, file_no_ext, target_ext)
-        if self.gen_normal.get(): self.internal_gen_normal(img, dest_dir, file_no_ext, target_ext)
+        # Smart naming: if input ends in _d, strip it so we get _e/_s/_n instead of _d_e
+        gen_name = file_no_ext
+        if gen_name.lower().endswith("_d"):
+            gen_name = gen_name[:-2]
+
+        if self.gen_emissive.get(): self.internal_gen_emissive(img, dest_dir, gen_name, target_ext)
+        if self.gen_specular.get(): self.internal_gen_specular(img, dest_dir, gen_name, target_ext)
+        if self.gen_normal.get(): self.internal_gen_normal(img, dest_dir, gen_name, target_ext)
         
         self.internal_save_img(img, out_path, has_alpha)
         return f"Done: {file_no_ext} ({w}x{h}) -> {target_ext}"  
@@ -735,7 +958,15 @@ class BZReduxSuite(ctk.CTk):
             
             # 2. Determine compression format
             # BC1 = DXT1 (No alpha), BC3 = DXT5 (Smooth alpha)
-            fmt = "BC3_UNORM" if has_alpha else "BC1_UNORM"
+            comp_mode = self.tex_compress.get()
+            if comp_mode == "Auto":
+                fmt = "BC3_UNORM" if has_alpha else "BC1_UNORM"
+            elif comp_mode == "DXT1":
+                fmt = "BC1_UNORM"
+            elif comp_mode == "DXT5":
+                fmt = "BC3_UNORM"
+            else: # None
+                fmt = "B8G8R8A8_UNORM"
             
             # 3. Setup texconv command
             # -m 0: Generate full mipmap chain
@@ -808,8 +1039,11 @@ class BZReduxSuite(ctk.CTk):
         self.internal_save_img(normal_map, os.path.join(dest, f"{name}_n{ext}"), False)
 
     def ui_single_tex(self):
-        path = filedialog.askopenfilename()
-        if not path: return
+        path = self.tex_single_path.get()
+        if not path or not os.path.exists(path):
+            path = filedialog.askopenfilename()
+            if not path: return
+            self.tex_single_path.set(path)
         try:
             msg = self.process_texture(path)
             self.log_msg(self.tex_log, msg)
@@ -817,32 +1051,48 @@ class BZReduxSuite(ctk.CTk):
             self.log_msg(self.tex_log, f"ERROR: {e}")
             
     def setup_dxt_tab(self):
-        ctk.CTkLabel(self.tab_dxt, text="DXTBZ2 Texture Converter", font=("Arial", 20, "bold")).pack(pady=10)
+        ttk.Label(self.tab_dxt, text="DXTBZ2 Texture Converter", font=(self.custom_font_name, 16, "bold"), foreground=BZ_GREEN).pack(pady=10)
         
         # --- Settings Frame ---
-        ctrl = ctk.CTkFrame(self.tab_dxt)
+        ctrl = ttk.Frame(self.tab_dxt)
         ctrl.pack(pady=10, padx=20, fill="x")
 
         # Format Selection
-        ctk.CTkLabel(ctrl, text="Output Format:").grid(row=0, column=0, padx=10, pady=10)
-        self.dxt_out_ext = ctk.StringVar(value=".dds")
-        ctk.CTkOptionMenu(ctrl, variable=self.dxt_out_ext, values=[".dds", ".png"]).grid(row=0, column=1, padx=10)
+        ttk.Label(ctrl, text="Output Format:").grid(row=0, column=0, padx=10, pady=10)
+        self.dxt_out_ext = tk.StringVar(value=".dds")
+        self.dxt_out_ext.trace_add("write", self.update_dxt_ui_state)
+        ttk.Combobox(ctrl, textvariable=self.dxt_out_ext, values=[".dds", ".png"], state="readonly", width=10).grid(row=0, column=1, padx=10)
+
+        # Compression Option
+        ttk.Label(ctrl, text="Compression:").grid(row=1, column=0, padx=10, pady=5)
+        self.dxt_compress = tk.StringVar(value="Auto")
+        self.dxt_compress_combo = ttk.Combobox(ctrl, textvariable=self.dxt_compress, values=["Auto", "DXT1", "DXT5", "None"], state="readonly", width=10)
+        self.dxt_compress_combo.grid(row=1, column=1, padx=10)
 
         # Standard Options (Linked to your existing logic)
-        self.dxt_mips = ctk.BooleanVar(value=True)
-        ctk.CTkCheckBox(ctrl, text="Gen Mipmaps (DDS only)", variable=self.dxt_mips).grid(row=1, column=0, padx=20, pady=5)
+        self.dxt_mips = tk.BooleanVar(value=True)
+        self.dxt_mips_chk = ttk.Checkbutton(ctrl, text="Gen Mipmaps (DDS only)", variable=self.dxt_mips)
+        self.dxt_mips_chk.grid(row=2, column=0, padx=20, pady=5)
         
-        self.dxt_overwrite = ctk.BooleanVar(value=False)
-        ctk.CTkCheckBox(ctrl, text="Overwrite Existing", variable=self.dxt_overwrite).grid(row=1, column=1, padx=20, pady=5)
+        self.dxt_overwrite = tk.BooleanVar(value=False)
+        ttk.Checkbutton(ctrl, text="Overwrite Existing", variable=self.dxt_overwrite).grid(row=2, column=1, padx=20, pady=5)
 
         # --- Action Buttons ---
-        btn_f = ctk.CTkFrame(self.tab_dxt)
+        btn_f = ttk.Frame(self.tab_dxt)
         btn_f.pack(pady=10)
-        ctk.CTkButton(btn_f, text="+ Convert Single .dxtbz2", fg_color="#2980b9", command=self.ui_single_dxt).pack(side="left", padx=10)
-        ctk.CTkButton(btn_f, text="+ Batch Folder", fg_color="#8e44ad", command=self.ui_batch_dxt).pack(side="left", padx=10)
+        ttk.Button(btn_f, text="+ Convert Single .dxtbz2", style="Action.TButton", command=self.ui_single_dxt).pack(side="left", padx=10)
+        ttk.Button(btn_f, text="+ Batch Folder", style="Action.TButton", command=self.ui_batch_dxt).pack(side="left", padx=10)
 
-        self.dxt_log = ctk.CTkTextbox(self.tab_dxt, height=400)
+        self.dxt_log = tk.Text(self.tab_dxt, height=20, bg="#050505", fg=BZ_FG, font=("Consolas", 9))
         self.dxt_log.pack(padx=20, pady=10, fill="both")
+
+    def update_dxt_ui_state(self, *args):
+        if self.dxt_out_ext.get() == ".dds":
+            self.dxt_compress_combo.configure(state="readonly")
+            self.dxt_mips_chk.configure(state="normal")
+        else:
+            self.dxt_compress_combo.configure(state="disabled")
+            self.dxt_mips_chk.configure(state="disabled")
 
     def process_dxtbz2(self, path):
         """Converts dxtbz2 to a temp DDS, then uses internal_save_img for final compression/format"""
@@ -879,11 +1129,14 @@ class BZReduxSuite(ctk.CTk):
                 # Use your existing texture processor logic for compression/mips/format
                 # Temporarily override UI variables to match this tab's settings
                 old_mips = self.tex_mips.get()
+                old_compress = self.tex_compress.get()
                 self.tex_mips.set(self.dxt_mips.get())
+                self.tex_compress.set(self.dxt_compress.get())
                 
                 self.internal_save_img(img, final_out, has_alpha)
                 
                 self.tex_mips.set(old_mips) # Restore global state
+                self.tex_compress.set(old_compress)
         finally:
             if os.path.exists(temp_dds): os.remove(temp_dds)
 
@@ -920,45 +1173,72 @@ class BZReduxSuite(ctk.CTk):
             for f in files:
                 try:
                     msg = self.process_dxtbz2(os.path.join(folder, f))
-                    self.after(0, lambda m=msg: self.log_msg(self.dxt_log, m))
+                    self.root.after(0, lambda m=msg: self.log_msg(self.dxt_log, m))
                 except: pass
-            self.after(0, lambda: self.log_msg(self.dxt_log, "Batch Finished."))
+            self.root.after(0, lambda: self.log_msg(self.dxt_log, "Batch Finished."))
             
         threading.Thread(target=run_batch, daemon=True).start()
+        
+    def setup_pack_tab(self):
+        ttk.Label(self.tab_pack, text="Channel Packer (Alpha Injector)", font=(self.custom_font_name, 16, "bold"), foreground=BZ_GREEN).pack(pady=10)
+        
+        f = ttk.Frame(self.tab_pack, padding=20)
+        f.pack(fill="both", expand=True)
+        
+        # RGB Input
+        ttk.Label(f, text="RGB Source (Color):").pack(anchor="w")
+        self.pack_rgb_path = tk.StringVar()
+        e1 = ttk.Entry(f, textvariable=self.pack_rgb_path)
+        e1.pack(fill="x", pady=(0, 5))
+        ttk.Button(f, text="Browse RGB", command=lambda: self.pack_rgb_path.set(filedialog.askopenfilename())).pack(anchor="e", pady=(0, 15))
+        
+        # Alpha Input
+        ttk.Label(f, text="Alpha Source (Grayscale/Gloss/Opacity):").pack(anchor="w")
+        self.pack_alpha_path = tk.StringVar()
+        e2 = ttk.Entry(f, textvariable=self.pack_alpha_path)
+        e2.pack(fill="x", pady=(0, 5))
+        ttk.Button(f, text="Browse Alpha", command=lambda: self.pack_alpha_path.set(filedialog.askopenfilename())).pack(anchor="e", pady=(0, 15))
+        
+        if HAS_DND:
+            for e in [e1, e2]:
+                e.drop_target_register(DND_FILES)
+                e.dnd_bind('<<Drop>>', lambda event, var=e.cget("textvariable"): self.root.setvar(var, event.data.strip('{}')))
 
-    # def ui_batch_tex(self, src_folder):
-        # """Thread-safe batch processing with progress updates"""
-        # out_dir = self.tex_batch_out.get()
-        # if out_dir == "[Same as Source]": 
-            # out_dir = None
+        # Output
+        ttk.Label(f, text="Output Filename:").pack(anchor="w")
+        self.pack_out_path = tk.StringVar()
+        ttk.Entry(f, textvariable=self.pack_out_path).pack(fill="x", pady=(0, 5))
+        ttk.Button(f, text="Save As...", command=lambda: self.pack_out_path.set(filedialog.asksaveasfilename(defaultextension=".png"))).pack(anchor="e", pady=(0, 20))
         
-        # from_filter = self.tex_from_ext.get().lower()
+        ttk.Button(f, text="MERGE & SAVE", style="Success.TButton", command=self.process_pack).pack(fill="x", pady=10)
         
-        # # Identify valid files
-        # supported = [".png", ".tga", ".dds", ".jpg", ".bmp"]
-        # files = [f for f in os.listdir(src_folder) if os.path.splitext(f)[1].lower() in supported]
-        
-        # if from_filter != "all supported":
-            # files = [f for f in files if os.path.splitext(f)[1].lower() == from_filter]
-        
-        # total = len(files)
-        # if total == 0:
-            # self.after(0, lambda: self.log_msg(self.tex_log, "No matching files found."))
-            # return
+        self.pack_log = tk.Text(f, height=10, bg="#050505", fg=BZ_FG, font=("Consolas", 9))
+        self.pack_log.pack(fill="both", expand=True)
 
-        # count = 0
-        # for file in files:
-            # try:
-                # msg = self.process_texture(os.path.join(src_folder, file), out_dir)
-                # count += 1
-                # # Schedule UI updates on the main thread
-                # progress = count / total
-                # self.after(0, lambda m=msg, p=progress: (self.log_msg(self.tex_log, m), self.tex_progress.set(p)))
-            # except Exception as e:
-                # self.after(0, lambda f=file, err=e: self.log_msg(self.tex_log, f"Skip {f}: {err}"))
-                    
-        # self.after(0, lambda c=count: self.log_msg(self.tex_log, f"BATCH COMPLETE: {c} textures processed."))
+    def process_pack(self):
+        rgb_p = self.pack_rgb_path.get()
+        a_p = self.pack_alpha_path.get()
+        out_p = self.pack_out_path.get()
+        
+        if not rgb_p or not a_p or not out_p:
+            self.log_msg(self.pack_log, "Error: Missing file paths.")
+            return
+            
+        try:
+            rgb_img = Image.open(rgb_p).convert("RGB")
+            alpha_img = Image.open(a_p).convert("L")
+            
+            if rgb_img.size != alpha_img.size:
+                self.log_msg(self.pack_log, f"Resizing Alpha {alpha_img.size} to match RGB {rgb_img.size}...")
+                alpha_img = alpha_img.resize(rgb_img.size, Image.Resampling.LANCZOS)
+                
+            rgb_img.putalpha(alpha_img)
+            rgb_img.save(out_p)
+            self.log_msg(self.pack_log, f"Success: Saved RGBA to {out_p}")
+        except Exception as e:
+            self.log_msg(self.pack_log, f"Error: {e}")
 
 if __name__ == "__main__":
-    app = BZReduxSuite()
-    app.mainloop()
+    root = TkinterDnD.Tk() if HAS_DND else tk.Tk()
+    app = BZReduxSuite(root)
+    root.mainloop()
