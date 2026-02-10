@@ -681,6 +681,9 @@ class BZReduxSuite:
                         pos_y = yseg * ZONE_RES
                         full_img.paste(zone_img, (pos_x, pos_y))
                 
+                # 3. Flip North/South (Fix Vertical Orientation)
+                full_img = full_img.transpose(Image.FLIP_TOP_BOTTOM)
+
                 out = os.path.splitext(path)[0] + ".png"
                 full_img.save(out)
                 self.log_msg(self.lgt_log, f"Exported {gw}x{gh} map. Top-Down segment order applied.")
@@ -692,6 +695,9 @@ class BZReduxSuite:
         if not path: return
         try:
             img = Image.open(path).convert('L')
+            # Flip North/South to match internal storage format
+            img = img.transpose(Image.FLIP_TOP_BOTTOM)
+            
             gw, gh = img.width // ZONE_RES, img.height // ZONE_RES
             
             out = os.path.splitext(path)[0] + ".lgt"
