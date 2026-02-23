@@ -26,19 +26,14 @@ def load_custom_font(font_path):
         except:
             return False
     elif sys.platform == 'linux':
-        try:
-            # Try tkextrafont if available
-            from tkextrafont import Font
-            return True
-        except ImportError:
-            # Fallback: copy to ~/.local/share/fonts
-            dest = os.path.expanduser("~/.local/share/fonts")
-            os.makedirs(dest, exist_ok=True)
-            import shutil
-            shutil.copy(font_path, dest)
-            # Re-scan fonts
-            subprocess.run(["fc-cache", "-f"], capture_output=True)
-            return True
+        # Fallback: copy to ~/.local/share/fonts
+        dest = os.path.expanduser("~/.local/share/fonts")
+        os.makedirs(dest, exist_ok=True)
+        import shutil
+        shutil.copy(font_path, dest)
+        # Re-scan fonts
+        subprocess.run(["fc-cache", "-f"], capture_output=True)
+        return True
     elif sys.platform == 'darwin':
         dest = os.path.expanduser("~/Library/Fonts")
         os.makedirs(dest, exist_ok=True)
