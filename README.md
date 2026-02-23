@@ -15,8 +15,7 @@ The ACT Editor is purpose-built for the Battlezone `.ACT` format (256-color inde
 * **Visual Feedback**: Selected colors are highlighted in a 16x16 grid with real-time RGB and Hex editing.
 * **Sync Logic**: Changes to the palette automatically update the preview in the MAP Converter tab.
 
- <img width="1152" height="932" alt="image" src="https://github.com/user-attachments/assets/03ec7f22-84ef-4fd5-896e-637878dcea2c" />
-
+<img width="1152" height="932" alt="image" src="https://github.com/user-attachments/assets/f5c0f11f-5506-4652-b143-fe2e90e712c9" />
 
 ### Texture Manager (DDS/TGA/PNG)
 An advanced processor for standard game textures, optimized for VRAM management and engine compatibility.
@@ -30,11 +29,8 @@ An advanced processor for standard game textures, optimized for VRAM management 
 * **Overwrite Existing Option**
 * **Multithreading Support**: Main window won't freeze during long batch processes.
 * **Progress Bar**: Shows progress for large batches.
-
-<img width="1152" height="932" alt="image" src="https://github.com/user-attachments/assets/d6d22349-589f-479c-bfd2-a0a1e31f8f82" />
-
-
-
+* 
+<img width="1152" height="932" alt="image" src="https://github.com/user-attachments/assets/a6776632-7358-432d-9f2d-a34df1ed48c1" />
 
 ### MAP Texture Serializer
 Handles the conversion of `.MAP` files, which are the specialized textures used by the legacy Battlezone game system.
@@ -43,7 +39,8 @@ Handles the conversion of `.MAP` files, which are the specialized textures used 
 * **Palette Serialization**: Correctly applies your active `.ACT` palette to indexed MAP files during export. Has built in palette data so you don't need an ACT file.
 * **Redux Support**: Automatically packs textures as ARGB8888 when required for high-definition assets.
 
-<img width="1152" height="932" alt="image" src="https://github.com/user-attachments/assets/ac9da67f-380a-45f6-b731-e2050069e520" />
+<img width="1152" height="932" alt="image" src="https://github.com/user-attachments/assets/4567e542-3944-4e12-8581-ff79bdd0d517" />
+
 
 
 ### LGT Light Converter
@@ -53,7 +50,8 @@ A dedicated tool for converting `.LGT` lightmap files into editable `.PNG` image
 * **PNG to LGT**: Repacks the PNG to an LGT file
 * **Batch Workflow**: Process entire mission folders of lightmaps simultaneously.
 
- <img width="1152" height="932" alt="image" src="https://github.com/user-attachments/assets/8ac91ad6-9bcd-4d4d-ad15-c96b431a160e" />
+<img width="1152" height="932" alt="image" src="https://github.com/user-attachments/assets/8cf4b58a-7c69-4609-8123-ef11d783878e" />
+
 
 ### DXTBZ2 Texture Converter
 A tool to convert proprietary BZ2 encoded textures to PNG or DDS. 
@@ -62,7 +60,8 @@ A tool to convert proprietary BZ2 encoded textures to PNG or DDS.
 * **Single or Batch Processing**
 * **Thanks to VEARIE for the DXTBZ2 direct python code!**
 
-<img width="1152" height="932" alt="image" src="https://github.com/user-attachments/assets/7a0372f8-aea8-4fc1-9181-9dfe072af651" />
+<img width="1152" height="932" alt="image" src="https://github.com/user-attachments/assets/fcf80b0f-364f-4cb3-830c-717cd568f0ca" />
+
 
 
 ---
