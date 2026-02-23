@@ -19,14 +19,14 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            artifact_name: BZR Texture Manager.exe
-            asset_name: BZR_Texture_Manager_Windows.exe
+            binary_name: BZR_Texture_Manager_Windows
+            artifact_name: BZR_Texture_Manager_Windows.exe
           - os: ubuntu-latest
-            artifact_name: BZR Texture Manager
-            asset_name: BZR_Texture_Manager_Linux
+            binary_name: BZR_Texture_Manager_Linux
+            artifact_name: BZR_Texture_Manager_Linux
           - os: macos-latest
-            artifact_name: BZR Texture Manager
-            asset_name: BZR_Texture_Manager_MacOS
+            binary_name: BZR_Texture_Manager_MacOS
+            artifact_name: BZR_Texture_Manager_MacOS
 
     steps:
     - uses: actions/checkout@v4
@@ -51,22 +51,22 @@ jobs:
     - name: Build with PyInstaller (Windows)
       if: matrix.os == 'windows-latest'
       run: |
-        python -m PyInstaller --noconfirm --onefile --windowed --name "BZR Texture Manager" --icon "bzrtex.ico" --add-data "bzrtex.ico;." --collect-all customtkinter --copy-metadata imageio src/tex_man.py
+        python -m PyInstaller --noconfirm --onefile --windowed --name "${{ matrix.binary_name }}" --icon "bzrtex.ico" --add-data "bzrtex.ico;." --collect-all customtkinter --copy-metadata imageio src/tex_man.py
 
     - name: Build with PyInstaller (Linux)
       if: matrix.os == 'ubuntu-latest'
       run: |
-        python -m PyInstaller --noconfirm --onefile --windowed --name "BZR Texture Manager" --icon "bzrtex.ico" --add-data "bzrtex.ico:." --collect-all customtkinter --copy-metadata imageio src/tex_man.py
+        python -m PyInstaller --noconfirm --onefile --windowed --name "${{ matrix.binary_name }}" --icon "bzrtex.ico" --add-data "bzrtex.ico:." --collect-all customtkinter --copy-metadata imageio src/tex_man.py
 
     - name: Build with PyInstaller (MacOS)
       if: matrix.os == 'macos-latest'
       run: |
-        python -m PyInstaller --noconfirm --onefile --windowed --name "BZR Texture Manager" --icon "bzrtex.ico" --add-data "bzrtex.ico:." --collect-all customtkinter --copy-metadata imageio src/tex_man.py
+        python -m PyInstaller --noconfirm --onefile --windowed --name "${{ matrix.binary_name }}" --icon "bzrtex.ico" --add-data "bzrtex.ico:." --collect-all customtkinter --copy-metadata imageio src/tex_man.py
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ matrix.asset_name }}
+        name: ${{ matrix.binary_name }}
         path: dist/${{ matrix.artifact_name }}
 
   release:
@@ -82,8 +82,8 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         files: |
-          BZR_Texture_Manager_Windows.exe/BZR Texture Manager.exe
-          BZR_Texture_Manager_Linux/BZR Texture Manager
-          BZR_Texture_Manager_MacOS/BZR Texture Manager
+          BZR_Texture_Manager_Windows/BZR_Texture_Manager_Windows.exe
+          BZR_Texture_Manager_Linux/BZR_Texture_Manager_Linux
+          BZR_Texture_Manager_MacOS/BZR_Texture_Manager_MacOS
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
