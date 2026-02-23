@@ -13,6 +13,40 @@ try:
 except ImportError:
     HAS_DND = False
 
+def load_custom_font(font_path):
+    """ Cross-platform font registration """
+    if not os.path.exists(font_path):
+        return False
+    
+    if os.name == 'nt':
+        try:
+            import ctypes
+            ctypes.windll.gdi32.AddFontResourceExW(font_path, 0x10, 0)
+            return True
+        except:
+            return False
+    elif sys.platform == 'linux':
+        try:
+            # Try tkextrafont if available
+            from tkextrafont import Font
+            return True
+        except ImportError:
+            # Fallback: copy to ~/.local/share/fonts
+            dest = os.path.expanduser("~/.local/share/fonts")
+            os.makedirs(dest, exist_ok=True)
+            import shutil
+            shutil.copy(font_path, dest)
+            # Re-scan fonts
+            subprocess.run(["fc-cache", "-f"], capture_output=True)
+            return True
+    elif sys.platform == 'darwin':
+        dest = os.path.expanduser("~/Library/Fonts")
+        os.makedirs(dest, exist_ok=True)
+        import shutil
+        shutil.copy(font_path, dest)
+        return True
+    return False
+
 class DXTBZ2Header(Structure):
     _fields_ = [
         ("m_Sig", c_int), ("m_DXTLevel", c_int),
@@ -141,10 +175,8 @@ class BZReduxSuite:
         if not os.path.exists(font_path):
             font_path = os.path.join(os.path.dirname(self.base_dir), "bzone.ttf")
             
-        if os.path.exists(font_path):
+        if load_custom_font(font_path):
             self.custom_font_name = "BZONE"
-            try: ctypes.windll.gdi32.AddFontResourceExW(font_path, 0x10, 0)
-            except: pass
         else:
             self.custom_font_name = "Consolas"
             
@@ -980,38 +1012,51 @@ class BZReduxSuite:
             # -f: Pixel format
             texconv_bin = resource_path("texconv.exe")
             
-            cmd = [
-                texconv_bin,
-                "-f", fmt,
-                "-y",
-                "-o", os.path.dirname(out_path),
-                temp_tga
-            ]
-            
-            # Handle mipmap setting from your UI
-            if self.tex_mips.get():
-                cmd.extend(["-m", "0"]) # Full chain
-            else:
-                cmd.extend(["-m", "1"]) # Single level
+            if os.name == 'nt' and os.path.exists(texconv_bin):
+                cmd = [
+                    texconv_bin,
+                    "-f", fmt,
+                    "-y",
+                    "-o", os.path.dirname(out_path),
+                    temp_tga
+                ]
                 
-            try:
-                # Hide the console window when running the subprocess
-                startupinfo = None
-                if os.name == 'nt':
-                    startupinfo = subprocess.STARTUPINFO()
-                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                
-                subprocess.run(cmd, check=True, startupinfo=startupinfo, capture_output=True)
-                
-                # texconv creates [filename].dds. If we saved temp as [name]_temp.tga, 
-                # it creates [name]_temp.dds. Rename it to the final out_path.
-                generated_dds = temp_tga.replace(".tga", ".dds")
-                if os.path.exists(generated_dds):
-                    if os.path.exists(out_path): os.remove(out_path)
-                    os.rename(generated_dds, out_path)
+                # Handle mipmap setting from your UI
+                if self.tex_mips.get():
+                    cmd.extend(["-m", "0"]) # Full chain
+                else:
+                    cmd.extend(["-m", "1"]) # Single level
                     
-            finally:
-                if os.path.exists(temp_tga): os.remove(temp_tga)
+                try:
+                    # Hide the console window when running the subprocess
+                    startupinfo = None
+                    if os.name == 'nt':
+                        startupinfo = subprocess.STARTUPINFO()
+                        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    
+                    subprocess.run(cmd, check=True, startupinfo=startupinfo, capture_output=True)
+                    
+                    # texconv creates [filename].dds. If we saved temp as [name]_temp.tga, 
+                    # it creates [name]_temp.dds. Rename it to the final out_path.
+                    generated_dds = temp_tga.replace(".tga", ".dds")
+                    if os.path.exists(generated_dds):
+                        if os.path.exists(out_path): os.remove(out_path)
+                        os.rename(generated_dds, out_path)
+                        
+                finally:
+                    if os.path.exists(temp_tga): os.remove(temp_tga)
+            else:
+                # Fallback for Linux/MacOS or missing texconv
+                # imageio doesn't support BC1/BC3 compression directly as easily as texconv,
+                # but it can save basic DDS files.
+                try:
+                    import imageio.v3 as iio
+                    # Note: complex compression options are limited in imageio/freeimage for DDS
+                    iio.imwrite(out_path, img) 
+                    if os.path.exists(temp_tga): os.remove(temp_tga)
+                except Exception as e:
+                    self.log_msg(self.tex_log, f"DDS Fallback Error: {e}")
+                    if os.path.exists(temp_tga): os.remove(temp_tga)
                 
         else:
             # Standard save for non-DDS files

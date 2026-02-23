@@ -3,3 +3,4 @@ Pillow
 numpy
 imageio
 imageio[freeimage]
+tkextrafont
