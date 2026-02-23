@@ -4,3 +4,5 @@ numpy
 imageio
 imageio[freeimage]
 tkextrafont
+scikit-build
+setuptools
