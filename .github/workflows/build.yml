@@ -60,17 +60,17 @@ jobs:
     - name: Build Texture Manager (Windows)
       if: matrix.os == 'windows-latest'
       run: |
-        python -m PyInstaller --noconfirm --onefile --windowed --name "${{ matrix.binary_name }}" --icon "bzrtex.ico" --add-data "bzrtex.ico;." --collect-all customtkinter --copy-metadata imageio src/tex_man.py
+        python -m PyInstaller --noconfirm --onefile --windowed --name "${{ matrix.binary_name }}" --icon "bzrtex.ico" --add-data "bzrtex.ico;." --collect-all customtkinter --copy-metadata imageio src/tex_man_entry.py
 
     - name: Build Texture Manager (Linux)
       if: matrix.os == 'ubuntu-latest'
       run: |
-        python -m PyInstaller --noconfirm --onefile --windowed --name "${{ matrix.binary_name }}" --icon "bzrtex.ico" --add-data "bzrtex.ico:." --collect-all customtkinter --copy-metadata imageio src/tex_man.py
+        python -m PyInstaller --noconfirm --onefile --windowed --name "${{ matrix.binary_name }}" --icon "bzrtex.ico" --add-data "bzrtex.ico:." --collect-all customtkinter --copy-metadata imageio src/tex_man_entry.py
 
     - name: Build Texture Manager (MacOS)
       if: matrix.os == 'macos-latest'
       run: |
-        python -m PyInstaller --noconfirm --onefile --windowed --name "${{ matrix.binary_name }}" --icon "bzrtex.ico" --add-data "bzrtex.ico:." --collect-all customtkinter --copy-metadata imageio src/tex_man.py
+        python -m PyInstaller --noconfirm --onefile --windowed --name "${{ matrix.binary_name }}" --icon "bzrtex.ico" --add-data "bzrtex.ico:." --collect-all customtkinter --copy-metadata imageio src/tex_man_entry.py
 
     - name: Build MakeMAP compatibility utility
       run: |
