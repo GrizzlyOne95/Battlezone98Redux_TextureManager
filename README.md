@@ -37,15 +37,17 @@ Handles the conversion of `.MAP` files, which are the specialized textures used 
 
 * **Bidirectional Conversion**: Convert `.MAP` to `.PNG` for editing and back to `.MAP` for the game.
 * **Palette Serialization**: Correctly applies your active `.ACT` palette to indexed MAP files during export. Has built-in palette data so you don't need an ACT file.
-* **Redux Support**: Packs textures as ARGB8888 for high-definition assets.
+* **Correct MAP decoding**: The integrated compatibility codec reads all five MAP pixel formats rather than assuming every non-indexed MAP is 32-bit BGRA.
+* **Redux Support**: The simple workflow packs imported images as ARGB8888 for high-definition assets.
+* **Advanced MakeMAP dialog**: Full MakeMAP-compatible controls are available directly from the MAP tab.
 
 <img width="1152" height="932" alt="image" src="https://github.com/user-attachments/assets/4567e542-3944-4e12-8581-ff79bdd0d517" />
 
-### MakeMAP Compatibility Utility
+### MakeMAP Compatibility
 
-The repository also includes a clean-room compatibility implementation of the original **Battlezone MakeMAP (Mar 27 2017)** as `src/makemap_compat.py`. Release builds package it as a separate `BZR_MakeMAP_Compat_*` command-line utility alongside the graphical Texture Manager.
+The application integrates a clean-room compatibility implementation of the original **Battlezone MakeMAP (Mar 27 2017)**. The core is `src/makemap_compat.py`; `src/tex_man_entry.py` routes the graphical MAP tab through that codec and adds an **Advanced MakeMAP** dialog. Release builds also package a separate `BZR_MakeMAP_Compat_*` command-line utility for scripting and batch pipelines.
 
-It adds the complete MakeMAP conversion surface that the simplified MAP tab does not expose:
+The compatibility layer covers the complete MakeMAP option surface found in the reference executable:
 
 * **All MAP formats**: type 0 indexed, type 1 A4R4G4B4, type 2 R5G6B5, type 3 A8R8G8B8, and type 4 X8R8G8B8.
 * **BMP/TGA output** with target-format quantization.
@@ -54,7 +56,7 @@ It adds the complete MakeMAP conversion surface that the simplified MAP tab does
 * **Orientation and quantization**: `-flipx`, `-flipy`, and MakeMAP-style `-diff` error diffusion.
 * **Batch behavior**: multiple paths, wildcard patterns, recursive directories, and the original `/option` spelling.
 
-Example:
+Example CLI usage:
 
 ```powershell
 BZR_MakeMAP_Compat_Windows.exe -8888 texture.png
@@ -88,7 +90,7 @@ A tool to convert proprietary BZ2 encoded textures to PNG or DDS.
 ## Installation & Requirements
 
 ### For Users
-Download the latest platform build from the Releases section. Release artifacts contain both the graphical **BZR Texture Manager** and the **BZR MakeMAP Compat** command-line utility.
+Download the latest platform build from the Releases section. The graphical **BZR Texture Manager** contains the MakeMAP integration, and release artifacts also contain the standalone **BZR MakeMAP Compat** command-line utility.
 
 ### For Developers
 
@@ -106,13 +108,13 @@ Download the latest platform build from the Releases section. Release artifacts 
 
 3. Download `texconv.exe` from Microsoft's DirectXTex GitHub and place it in the root folder before using/building the DDS features on Windows.
 
-4. Run the graphical application:
+4. Run the integrated graphical application:
 
    ```bash
-   python src/tex_man.py
+   python src/tex_man_entry.py
    ```
 
-5. Run the MakeMAP-compatible utility:
+5. Run the MakeMAP-compatible CLI directly:
 
    ```bash
    python src/makemap_compat.py -8888 texture.png
