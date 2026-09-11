@@ -87,7 +87,7 @@ jobs:
   release:
     name: Create Release
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.ref == 'refs/heads/main' && github.event.head_commit.message == 'release: v2.1'
     runs-on: ubuntu-latest
     steps:
     - name: Download all artifacts
@@ -96,6 +96,9 @@ jobs:
     - name: Create Release
       uses: softprops/action-gh-release@v2
       with:
+        tag_name: v2.1
+        name: v2.1
+        target_commitish: fab43ed2f7b82e0ae008fb4f4b8fccc57f0ab509
         files: |
           BZR_Texture_Manager_Windows/BZR_Texture_Manager_Windows.exe
           BZR_Texture_Manager_Windows/BZR_MakeMAP_Compat_Windows.exe
