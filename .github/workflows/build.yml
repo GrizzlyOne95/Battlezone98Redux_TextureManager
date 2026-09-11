@@ -21,12 +21,18 @@ jobs:
           - os: windows-latest
             binary_name: BZR_Texture_Manager_Windows
             artifact_name: BZR_Texture_Manager_Windows.exe
+            makemap_binary_name: BZR_MakeMAP_Compat_Windows
+            makemap_artifact_name: BZR_MakeMAP_Compat_Windows.exe
           - os: ubuntu-latest
             binary_name: BZR_Texture_Manager_Linux
             artifact_name: BZR_Texture_Manager_Linux
+            makemap_binary_name: BZR_MakeMAP_Compat_Linux
+            makemap_artifact_name: BZR_MakeMAP_Compat_Linux
           - os: macos-latest
             binary_name: BZR_Texture_Manager_MacOS
             artifact_name: BZR_Texture_Manager_MacOS
+            makemap_binary_name: BZR_MakeMAP_Compat_MacOS
+            makemap_artifact_name: BZR_MakeMAP_Compat_MacOS
 
     steps:
     - uses: actions/checkout@v4
@@ -43,31 +49,40 @@ jobs:
         pip install -r requirements.txt
         pip install pyinstaller
 
+    - name: Run codec regression tests
+      run: python -m unittest discover -s tests -v
+
     - name: Download texconv (Windows only)
       if: matrix.os == 'windows-latest'
       run: |
         curl -L -o texconv.exe https://github.com/microsoft/DirectXTex/releases/latest/download/texconv.exe
 
-    - name: Build with PyInstaller (Windows)
+    - name: Build Texture Manager (Windows)
       if: matrix.os == 'windows-latest'
       run: |
         python -m PyInstaller --noconfirm --onefile --windowed --name "${{ matrix.binary_name }}" --icon "bzrtex.ico" --add-data "bzrtex.ico;." --collect-all customtkinter --copy-metadata imageio src/tex_man.py
 
-    - name: Build with PyInstaller (Linux)
+    - name: Build Texture Manager (Linux)
       if: matrix.os == 'ubuntu-latest'
       run: |
         python -m PyInstaller --noconfirm --onefile --windowed --name "${{ matrix.binary_name }}" --icon "bzrtex.ico" --add-data "bzrtex.ico:." --collect-all customtkinter --copy-metadata imageio src/tex_man.py
 
-    - name: Build with PyInstaller (MacOS)
+    - name: Build Texture Manager (MacOS)
       if: matrix.os == 'macos-latest'
       run: |
         python -m PyInstaller --noconfirm --onefile --windowed --name "${{ matrix.binary_name }}" --icon "bzrtex.ico" --add-data "bzrtex.ico:." --collect-all customtkinter --copy-metadata imageio src/tex_man.py
+
+    - name: Build MakeMAP compatibility utility
+      run: |
+        python -m PyInstaller --noconfirm --onefile --name "${{ matrix.makemap_binary_name }}" src/makemap_compat.py
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.binary_name }}
-        path: dist/${{ matrix.artifact_name }}
+        path: |
+          dist/${{ matrix.artifact_name }}
+          dist/${{ matrix.makemap_artifact_name }}
 
   release:
     name: Create Release
@@ -83,7 +98,10 @@ jobs:
       with:
         files: |
           BZR_Texture_Manager_Windows/BZR_Texture_Manager_Windows.exe
+          BZR_Texture_Manager_Windows/BZR_MakeMAP_Compat_Windows.exe
           BZR_Texture_Manager_Linux/BZR_Texture_Manager_Linux
+          BZR_Texture_Manager_Linux/BZR_MakeMAP_Compat_Linux
           BZR_Texture_Manager_MacOS/BZR_Texture_Manager_MacOS
+          BZR_Texture_Manager_MacOS/BZR_MakeMAP_Compat_MacOS
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
