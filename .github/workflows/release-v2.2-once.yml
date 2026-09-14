@@ -10,18 +10,98 @@ permissions:
   contents: write
 
 jobs:
-  tag:
-    runs-on: ubuntu-latest
+  build:
+    name: Build v2.2 for ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            binary_name: BZR_Texture_Manager_Windows
+            artifact_name: BZR_Texture_Manager_Windows.exe
+            makemap_binary_name: BZR_MakeMAP_Compat_Windows
+            makemap_artifact_name: BZR_MakeMAP_Compat_Windows.exe
+          - os: ubuntu-latest
+            binary_name: BZR_Texture_Manager_Linux
+            artifact_name: BZR_Texture_Manager_Linux
+            makemap_binary_name: BZR_MakeMAP_Compat_Linux
+            makemap_artifact_name: BZR_MakeMAP_Compat_Linux
+          - os: macos-latest
+            binary_name: BZR_Texture_Manager_MacOS
+            artifact_name: BZR_Texture_Manager_MacOS
+            makemap_binary_name: BZR_MakeMAP_Compat_MacOS
+            makemap_artifact_name: BZR_MakeMAP_Compat_MacOS
+
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-      - name: Create v2.2 tag on validated feature merge
-        shell: bash
+          ref: v2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
         run: |
-          if git rev-parse v2.2 >/dev/null 2>&1; then
-            echo "v2.2 already exists; nothing to do."
-            exit 0
-          fi
-          git tag v2.2 f610cf40048afdde99ef9f8c146ede28e269d193
-          git push origin v2.2
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Run codec regression tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Generate application icon
+        run: python scripts/generate_app_icon.py branding/repo_icon.svg bzrtex.ico
+
+      - name: Download texconv (Windows only)
+        if: matrix.os == 'windows-latest'
+        run: curl -L -o texconv.exe https://github.com/microsoft/DirectXTex/releases/latest/download/texconv.exe
+
+      - name: Build Texture Manager (Windows)
+        if: matrix.os == 'windows-latest'
+        run: python -m PyInstaller --noconfirm --onefile --windowed --name "${{ matrix.binary_name }}" --icon "bzrtex.ico" --add-data "bzrtex.ico;." --collect-all customtkinter --copy-metadata imageio src/tex_man_stock_palette_entry.py
+
+      - name: Build Texture Manager (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: python -m PyInstaller --noconfirm --onefile --windowed --name "${{ matrix.binary_name }}" --icon "bzrtex.ico" --add-data "bzrtex.ico:." --collect-all customtkinter --copy-metadata imageio src/tex_man_stock_palette_entry.py
+
+      - name: Build Texture Manager (MacOS)
+        if: matrix.os == 'macos-latest'
+        run: python -m PyInstaller --noconfirm --onefile --windowed --name "${{ matrix.binary_name }}" --icon "bzrtex.ico" --add-data "bzrtex.ico:." --collect-all customtkinter --copy-metadata imageio src/tex_man_stock_palette_entry.py
+
+      - name: Build MakeMAP compatibility utility
+        run: python -m PyInstaller --noconfirm --onefile --name "${{ matrix.makemap_binary_name }}" src/makemap_compat.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.binary_name }}
+          path: |
+            dist/${{ matrix.artifact_name }}
+            dist/${{ matrix.makemap_artifact_name }}
+
+  release:
+    name: Publish v2.2
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v2.2
+          name: v2.2
+          generate_release_notes: true
+          files: |
+            BZR_Texture_Manager_Windows/BZR_Texture_Manager_Windows.exe
+            BZR_Texture_Manager_Windows/BZR_MakeMAP_Compat_Windows.exe
+            BZR_Texture_Manager_Linux/BZR_Texture_Manager_Linux
+            BZR_Texture_Manager_Linux/BZR_MakeMAP_Compat_Linux
+            BZR_Texture_Manager_MacOS/BZR_Texture_Manager_MacOS
+            BZR_Texture_Manager_MacOS/BZR_MakeMAP_Compat_MacOS
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
