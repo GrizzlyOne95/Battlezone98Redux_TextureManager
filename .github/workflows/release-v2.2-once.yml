@@ -1,0 +1,27 @@
+name: Release v2.2 (one-shot)
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/release-v2.2-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Create v2.2 tag on validated feature merge
+        shell: bash
+        run: |
+          if git rev-parse v2.2 >/dev/null 2>&1; then
+            echo "v2.2 already exists; nothing to do."
+            exit 0
+          fi
+          git tag v2.2 f610cf40048afdde99ef9f8c146ede28e269d193
+          git push origin v2.2
