@@ -64,35 +64,40 @@ A tool to convert proprietary BZ2 encoded textures to PNG or DDS.
 
 <img width="1152" height="932" alt="image" src="https://github.com/user-attachments/assets/7a0372f8-aea8-4fc1-9181-9dfe072af651" />
 
-### Bulk DDS Recompressor (CLI)
+### DDS Compression
 
-`src/recompress.py` walks a whole mod folder and rewrites every uncompressed
-`.dds` as DXT1 or DXT5 in place, keeping the mip chain. This is the one that
-moves the needle on a big mod: ISDF Chronicles shipped **7.8 GB of DDS, of which
-6.4 GB was uncompressed**, and this takes the folder to roughly 2.4 GB without
-changing a single resolution.
+The Texture Manager writes DDS in-process rather than shelling out to
+`texconv.exe`. That binary used to be a required download placed next to the exe;
+it is no longer used anywhere, and every DDS the tool writes -- the texture
+processor, the generated emissive/specular/normal maps, and the DXTBZ2
+converter -- goes through `src/bcpack.py` instead.
+
+What that changes:
+
+* **No external binary, no temp file, no subprocess.** Pure Python on the
+  numpy/Pillow dependencies already declared.
+* **The author's mip chain survives.** Pillow exposes mip 0 of a DDS and nothing
+  else (no `n_frames`; `seek(1)` raises EOFError), so the old path had to
+  regenerate the whole chain with a filter nobody chose. Source levels are now
+  read and transcoded in place, and a chain is generated only for files that
+  shipped without one, or when the image was rescaled and the old levels no
+  longer match it.
+* **Pillow's own DDS writer was never an option** for the other half: it emits an
+  uncompressed surface with the FourCC zeroed and mipCount 0.
+
+### Bulk DDS Recompressor
+
+The same encoder drives a whole-mod pass, in the GUI under **Bulk DDS Recompress
+(in place)** on the Texture tab, or from the command line:
 
 ```
 python src/recompress.py "<mod folder>" --backup "<somewhere safe>" [--dry-run]
 ```
 
-It is a separate path from the GUI's Texture Manager tab rather than a mode of
-it, because the two have different constraints:
-
-* **No `texconv.exe`.** The GUI shells out to DirectXTex, which has to be
-  downloaded and placed next to the exe. This is pure Python on the numpy/Pillow
-  dependencies already declared.
-* **It can read the files that matter.** The GUI path goes
-  `Image.open(path).convert("RGBA")`, and Pillow will not open an R5G6B5 DDS at
-  all — which is the single biggest class of uncompressed art in the wild (295
-  of ISDF Chronicles' 906 uncompressed files are R5G6B5 normal maps).
-* **Channel order comes from the pixel-format bit masks, not from a guess.**
-  Most 32-bit DDS files are ARGB, but nine of that mod's are ABGR, and all nine
-  are normal maps. A reader that hard-codes BGR swaps X and Z on them and
-  quietly wrecks the lighting.
-* **Source mips are transcoded, not regenerated**, so the author's own mip chain
-  survives exactly and no resampling filter gets chosen on their behalf. A chain
-  is generated only for files that shipped without one.
+This is the one that moves the needle on a big mod: ISDF Chronicles shipped
+**7.8 GB of DDS, of which 6.4 GB was uncompressed**, and this takes the folder to
+roughly 2.8 GB without changing a single resolution. It rewrites in place, so a
+backup folder is required and must be outside the tree being rewritten.
 
 #### What it decides, and why
 
@@ -147,11 +152,9 @@ If you wish to run from source or modify the tool:
 ## 2. Install dependencies:
    pip install customtkinter Pillow numpy imageio imageio[freeimage]
 
-## 3. Download texconv.exe from Microsoft's DirectXTex GitHub. Place texconv.exe in the root folder before running or building.
-
-## 4. Run the application:
+## 3. Run the application:
    python tex_man.py
 
-## 5. Build command:
+## 4. Build command:
    python -m PyInstaller --noconfirm --onefile --windowed --name "BZR Texture Manager" --icon "bzrtex.ico" --add-data "bzrtex.ico;." --collect-all customtkinter --copy-metadata imageio tex_man.py
 

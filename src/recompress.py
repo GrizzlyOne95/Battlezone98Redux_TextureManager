@@ -66,17 +66,7 @@ def angular_error(src, dec):
     return float(np.degrees(np.arccos(d)).mean())
 
 
-def build_chain(levels, width, height):
-    """Source mips if there are any, else a Lanczos chain down to 1x1."""
-    if len(levels) > 1:
-        return levels, "kept"
-    from PIL import Image
-    im = Image.fromarray(levels[0], "RGBA")
-    out, w, h = [levels[0]], width, height
-    while w > 1 or h > 1:
-        w, h = max(1, w // 2), max(1, h // 2)
-        out.append(np.asarray(im.resize((w, h), Image.LANCZOS)))
-    return out, "generated"
+build_chain = bcpack.build_chain      # shared with the GUI's save path
 
 
 def convert(path, backup_dir, dry_run=False, ui=()):
