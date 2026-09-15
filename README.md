@@ -64,6 +64,72 @@ A tool to convert proprietary BZ2 encoded textures to PNG or DDS.
 
 <img width="1152" height="932" alt="image" src="https://github.com/user-attachments/assets/7a0372f8-aea8-4fc1-9181-9dfe072af651" />
 
+### Bulk DDS Recompressor (CLI)
+
+`src/recompress.py` walks a whole mod folder and rewrites every uncompressed
+`.dds` as DXT1 or DXT5 in place, keeping the mip chain. This is the one that
+moves the needle on a big mod: ISDF Chronicles shipped **7.8 GB of DDS, of which
+6.4 GB was uncompressed**, and this takes the folder to roughly 2.4 GB without
+changing a single resolution.
+
+```
+python src/recompress.py "<mod folder>" --backup "<somewhere safe>" [--dry-run]
+```
+
+It is a separate path from the GUI's Texture Manager tab rather than a mode of
+it, because the two have different constraints:
+
+* **No `texconv.exe`.** The GUI shells out to DirectXTex, which has to be
+  downloaded and placed next to the exe. This is pure Python on the numpy/Pillow
+  dependencies already declared.
+* **It can read the files that matter.** The GUI path goes
+  `Image.open(path).convert("RGBA")`, and Pillow will not open an R5G6B5 DDS at
+  all — which is the single biggest class of uncompressed art in the wild (295
+  of ISDF Chronicles' 906 uncompressed files are R5G6B5 normal maps).
+* **Channel order comes from the pixel-format bit masks, not from a guess.**
+  Most 32-bit DDS files are ARGB, but nine of that mod's are ABGR, and all nine
+  are normal maps. A reader that hard-codes BGR swaps X and Z on them and
+  quietly wrecks the lighting.
+* **Source mips are transcoded, not regenerated**, so the author's own mip chain
+  survives exactly and no resampling filter gets chosen on their behalf. A chain
+  is generated only for files that shipped without one.
+
+#### What it decides, and why
+
+**DXT1 vs DXT5** comes from whether mip 0 has alpha the renderer could act on.
+The common "RGBA32 whose alpha is 255 everywhere" case is very common — 247 of
+429 in that mod — and costs 0.5 bpp instead of 1.0 with nothing lost, because
+there is nothing in the channel to lose. The test has a tolerance: those mission
+loading screens are alpha 255 everywhere except 2432 texels at exactly 254, out
+of 8.4 million. Reading `min < 255` literally there doubles the file to preserve
+one part in 255 of blend on 0.03% of an image that is drawn opaque and
+fullscreen.
+
+**UI art is skipped** (`src/uiscan.py`, override with `--compress-ui`). BC1
+quantises each 4×4 block to two endpoints, which on a glyph edge or a thin HUD
+rule reads as ringing where the same error on a diffuse map is invisible. The
+scan finds them by the material scheme they inherit — `BZSprite/AlphaHUD` and
+`BZSprite/AlphaHUDPixel` — not by filename, so it catches `bzfont` and
+`numbers2` without also catching `BZBaseCockpit`, which is a world-space model.
+The whole UI set is under 1% of the art, so this costs nothing worth having.
+
+**Every file is verified by decoding what was written**, not by trusting the
+settings that were applied, and the summary reports colour RMSE plus two extra
+columns:
+
+* normal maps get mean angular deviation of the decoded normal. For scale, BC1
+  measured 0.28–0.47° on real art, against the **3.70° per code step** that
+  R5G6B5 — the format most of these normal maps already ship in — imposes
+  anyway. BC1 is four times smaller *and* an order of magnitude inside the
+  existing error floor.
+* DXT5 files get mean alpha error. The BC4 encoder is exact on binary alpha,
+  which is the cutout case that actually matters.
+
+**Originals are copied out and hash-checked before anything is overwritten**, and
+later runs re-derive from that backup rather than from the already-compressed
+live file — so changing a setting and re-running replays the whole job cleanly
+instead of compounding on itself.
+
 
 ---
 
