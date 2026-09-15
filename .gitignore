@@ -1,0 +1,15 @@
+# User requested ignores
+tex_man_config.json
+texconv.exe
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+
+# PyInstaller
+*.spec
+build/
+dist/

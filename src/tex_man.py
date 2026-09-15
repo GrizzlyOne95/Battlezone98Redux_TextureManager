@@ -1,4 +1,4 @@
-import os, struct, math, sys, ctypes, json
+import os, struct, math, sys, subprocess, ctypes, json
 import tkinter as tk
 from tkinter import filedialog, messagebox, colorchooser, ttk
 from PIL import Image, ImageTk
@@ -17,6 +17,35 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bcpack
 import uiscan
 import recompress
+
+def load_custom_font(font_path):
+    """ Cross-platform font registration """
+    if not os.path.exists(font_path):
+        return False
+    
+    if os.name == 'nt':
+        try:
+            import ctypes
+            ctypes.windll.gdi32.AddFontResourceExW(font_path, 0x10, 0)
+            return True
+        except:
+            return False
+    elif sys.platform == 'linux':
+        # Fallback: copy to ~/.local/share/fonts
+        dest = os.path.expanduser("~/.local/share/fonts")
+        os.makedirs(dest, exist_ok=True)
+        import shutil
+        shutil.copy(font_path, dest)
+        # Re-scan fonts
+        subprocess.run(["fc-cache", "-f"], capture_output=True)
+        return True
+    elif sys.platform == 'darwin':
+        dest = os.path.expanduser("~/Library/Fonts")
+        os.makedirs(dest, exist_ok=True)
+        import shutil
+        shutil.copy(font_path, dest)
+        return True
+    return False
 
 class DXTBZ2Header(Structure):
     _fields_ = [
@@ -137,10 +166,8 @@ class BZReduxSuite:
         if not os.path.exists(font_path):
             font_path = os.path.join(os.path.dirname(self.base_dir), "bzone.ttf")
             
-        if os.path.exists(font_path):
+        if load_custom_font(font_path):
             self.custom_font_name = "BZONE"
-            try: ctypes.windll.gdi32.AddFontResourceExW(font_path, 0x10, 0)
-            except: pass
         else:
             self.custom_font_name = "Consolas"
             
@@ -265,7 +292,7 @@ class BZReduxSuite:
         
         main_f = ttk.Frame(self.tab_act)
         main_f.pack(pady=10, padx=20, fill="both", expand=True)
-
+        
         # 1. Left: The 16x16 Grid
         grid_f = ttk.Frame(main_f)
         grid_f.pack(side="left", padx=20, pady=20)
@@ -280,7 +307,7 @@ class BZReduxSuite:
                                 command=lambda x=i: self.select_palette_color(x))
             btn.grid(row=i // 16, column=i % 16, padx=1, pady=1)
             self.pal_buttons.append(btn)
-
+        
         # 2. Middle: Quick Jump Shortcuts (Fixed width/height arguments)
         jump_f = ttk.Frame(main_f, width=140)
         jump_f.pack(side="left", padx=10, fill="y", pady=20)
@@ -300,30 +327,30 @@ class BZReduxSuite:
                       command=lambda: self.jump_to_index(96)).pack(pady=2)
         ttk.Button(jump_f, text="Objects (0)", width=15, 
                       command=lambda: self.jump_to_index(0)).pack(pady=2)
-
+        
         # 3. Right: Edit Controls
         ctrl_f = ttk.Frame(main_f)
         ctrl_f.pack(side="right", padx=20, fill="y", expand=True)
-
+        
         self.sel_idx_var = tk.StringVar(value="Select a Color")
         self.sel_label = ttk.Label(ctrl_f, textvariable=self.sel_idx_var, font=(self.custom_font_name, 14, "bold"))
         self.sel_label.pack(pady=10)
-
+        
         self.bz_info_var = tk.StringVar(value="")
         ttk.Label(ctrl_f, textvariable=self.bz_info_var, foreground="#e67e22", wraplength=200).pack()
-
+        
         # RGB Sliders
         self.r_val = self.create_color_slider(ctrl_f, "Red", self.update_color_from_sliders)
         self.g_val = self.create_color_slider(ctrl_f, "Green", self.update_color_from_sliders)
         self.b_val = self.create_color_slider(ctrl_f, "Blue", self.update_color_from_sliders)
-
+        
         # Hex Input
         ttk.Label(ctrl_f, text="Hex Code:").pack(pady=(10,0))
         self.hex_var = tk.StringVar()
         self.hex_entry = ttk.Entry(ctrl_f, textvariable=self.hex_var)
         self.hex_entry.pack(pady=5)
         ttk.Button(ctrl_f, text="Apply Hex", command=self.apply_hex).pack(pady=5)
-
+        
         # File Actions
         ttk.Button(ctrl_f, text="LOAD .ACT", style="Success.TButton", command=self.load_act).pack(fill="x", pady=10)
         ttk.Button(ctrl_f, text="SAVE .ACT", style="Action.TButton", command=self.save_act).pack(fill="x")
@@ -357,7 +384,7 @@ class BZReduxSuite:
         else:
             info = f"INDEX {idx}: Standard"
             hint = "#ffffff"
-
+        
         self.sel_idx_var.set(f"Index: {idx}")
         self.bz_info_var.set(info)
         self.sel_label.configure(foreground=hint)
@@ -461,7 +488,7 @@ class BZReduxSuite:
         self.pal_canvas = tk.Canvas(preview_frame, height=30, bg="black", highlightthickness=0)
         self.pal_canvas.pack(fill="x", padx=10, pady=5)
         self.update_pal_preview() 
-
+        
         # 2. Options Frame (Batch Folder & Scaling)
         opts = ttk.Frame(self.tab_map)
         opts.pack(pady=10, padx=20, fill="x")
@@ -471,12 +498,12 @@ class BZReduxSuite:
         ttk.Label(opts, text="Batch Output Folder:").grid(row=0, column=0, padx=10, pady=5, sticky="w")
         ttk.Entry(opts, textvariable=self.batch_out_path, width=50).grid(row=0, column=1, padx=5, pady=5)
         ttk.Button(opts, text="Browse", width=10, command=self.set_batch_out).grid(row=0, column=2, padx=5)
-
+        
         # Scaling Option
         ttk.Label(opts, text="Rescale (Batch/Single):").grid(row=1, column=0, padx=10, pady=5, sticky="w")
         self.map_scale_var = tk.StringVar(value="No Scaling")
         ttk.Combobox(opts, textvariable=self.map_scale_var, values=["No Scaling", "128x128", "256x256", "512x512", "1024x1024"], state="readonly").grid(row=1, column=1, padx=5, sticky="w")
-
+        
         # 3. Palette Override Section (Restored)
         pal_opt = ttk.Frame(self.tab_map)
         pal_opt.pack(pady=5, padx=20, fill="x")
@@ -486,7 +513,7 @@ class BZReduxSuite:
         ttk.Entry(pal_opt, textvariable=self.custom_pal_path, width=40).pack(side="left", padx=5)
         ttk.Button(pal_opt, text="Load .ACT", style="Success.TButton", command=self.ui_load_override_pal).pack(side="left", padx=5)
         ttk.Button(pal_opt, text="Reset", command=self.reset_map_palette).pack(side="left", padx=5)
-
+        
         # 4. Actions Frame
         f = ttk.Frame(self.tab_map)
         f.pack(pady=10, padx=20, fill="x")
@@ -603,7 +630,7 @@ class BZReduxSuite:
                     self.log_msg(self.map_log, f"Skip {file}: {e}")
         self.log_msg(self.map_log, f"BATCH COMPLETE: {count} files processed.")
 
-# --- LGT CONVERTER (STITCHING FIXED) ---
+# --- LGT CONVERTER (BZRLGT REFERENCE-COMPATIBLE) ---
     def setup_lgt_tab(self):
         ttk.Label(self.tab_lgt, text="Terrain Lightmap (.LGT) Manager", font=(self.custom_font_name, 16, "bold"), foreground=BZ_GREEN).pack(pady=10)
         
@@ -646,40 +673,52 @@ class BZReduxSuite:
         path = filedialog.askopenfilename(filetypes=[("Lightmap", "*.lgt")])
         if not path: return
         try:
+            chunk_size = ZONE_RES * ZONE_RES
             file_size = os.path.getsize(path)
-            # ZONE_RES is 256 for Redux. Chunks are 128x128 in legacy.
-            total_chunks = file_size // (ZONE_RES * ZONE_RES)
-            map_chunks = total_chunks - 1 
-            
+            if file_size % chunk_size != 0:
+                raise Exception(f"Invalid LGT size: {file_size} bytes is not a multiple of {chunk_size}.")
+
+            total_chunks = file_size // chunk_size
+            map_chunks = total_chunks - 1
             if map_chunks <= 0:
-                raise Exception("File too small to contain map data.")
+                raise Exception("File too small to contain the leading special chunk and map data.")
 
             gw = int(self.lgt_width_var.get())
-            if gw <= 0: gw = int(math.sqrt(map_chunks))
+            if gw <= 0:
+                gw = math.isqrt(map_chunks)
+                if gw * gw != map_chunks:
+                    raise Exception(f"LGT has {map_chunks} map chunks and is not square; specify Map Width (Zones).")
+            if map_chunks % gw != 0:
+                raise Exception(f"{map_chunks} map chunks cannot form a grid {gw} zones wide.")
             gh = map_chunks // gw
             
             with open(path, 'rb') as f:
-                # 1. Skip the Border Chunk (first 65,536 bytes for Redux)
-                f.read(ZONE_RES * ZONE_RES)
+                # BzrLgt treats the first 65,536 bytes as a special non-image chunk.
+                special = f.read(chunk_size)
+                if len(special) != chunk_size:
+                    raise Exception("Truncated LGT special chunk.")
                 
                 full_img = Image.new('L', (gw * ZONE_RES, gh * ZONE_RES))
                 
-                # 2. Stitch Chunks: Sequential reading placed Top-to-Bottom
-                # This fixes the vertical swap by starting the file data at the top row.
+                # Sequential map chunks are stored left-to-right. Chunk rows and
+                # scanlines are south-to-north, which is equivalent to assembling
+                # normally and then flipping the complete image vertically.
                 for yseg in range(gh): 
                     for xseg in range(gw):
-                        data = f.read(ZONE_RES * ZONE_RES)
-                        if not data: break
+                        data = f.read(chunk_size)
+                        if len(data) != chunk_size:
+                            raise Exception("Truncated LGT map chunk.")
                         
                         zone_img = Image.frombytes('L', (ZONE_RES, ZONE_RES), data)
-                        
                         pos_x = xseg * ZONE_RES
                         pos_y = yseg * ZONE_RES
                         full_img.paste(zone_img, (pos_x, pos_y))
                 
+                full_img = full_img.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+
                 out = os.path.splitext(path)[0] + ".png"
                 full_img.save(out)
-                self.log_msg(self.lgt_log, f"Exported {gw}x{gh} map. Top-Down segment order applied.")
+                self.log_msg(self.lgt_log, f"Exported {gw}x{gh} zones from BZR LGT.")
                 
         except Exception as e: self.log_msg(self.lgt_log, f"ERROR: {e}")
 
@@ -688,23 +727,36 @@ class BZReduxSuite:
         if not path: return
         try:
             img = Image.open(path).convert('L')
+            if img.width <= 0 or img.height <= 0:
+                raise Exception("Image dimensions must be positive.")
+            if img.width % ZONE_RES != 0 or img.height % ZONE_RES != 0:
+                raise Exception(f"LGT images must be multiples of {ZONE_RES} pixels; got {img.width}x{img.height}.")
+
+            # Critical BzrLgt behavior: the leading 65,536-byte special chunk is
+            # filled from the UNFLIPPED source image's top-left pixel. Sampling
+            # after the storage flip incorrectly uses the source bottom-left.
+            special_value = img.getpixel((0, 0))
+
+            # BzrLgt stores the map south-to-north. A whole-image vertical flip
+            # followed by ordinary 256x256 chunking produces the same byte order.
+            stored_img = img.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
             gw, gh = img.width // ZONE_RES, img.height // ZONE_RES
+            chunk_size = ZONE_RES * ZONE_RES
             
             out = os.path.splitext(path)[0] + ".lgt"
             with open(out, 'wb') as f:
-                # 1. Write Border Chunk
-                border_color = img.getpixel((0, 0)) # Sample top-left for border color
-                f.write(bytes([border_color] * (ZONE_RES * ZONE_RES)))
+                # 1. Leading special chunk (reference-compatible).
+                f.write(bytes([special_value]) * chunk_size)
                 
-                # 2. Pack Chunks (Top-Down order)
+                # 2. Map chunks, left-to-right and south-to-north in file order.
                 for yseg in range(gh):
                     for xseg in range(gw):
                         box = (xseg * ZONE_RES, yseg * ZONE_RES, 
                                (xseg + 1) * ZONE_RES, (yseg + 1) * ZONE_RES)
-                        zone = img.crop(box)
+                        zone = stored_img.crop(box)
                         f.write(zone.tobytes())
                         
-            self.log_msg(self.lgt_log, f"Packed {gw*gh} zones into .LGT (Top-Down).")
+            self.log_msg(self.lgt_log, f"Packed {gw*gh} zones into BzrLgt-compatible .LGT.")
         except Exception as e: self.log_msg(self.lgt_log, f"ERROR: {e}")
 
     def setup_texture_tab(self):
@@ -713,11 +765,11 @@ class BZReduxSuite:
         # Main container to split controls and log
         main_content = ttk.Frame(self.tab_tex)
         main_content.pack(fill="both", expand=True, padx=10, pady=5)
-
+        
         # Left Column: Format & File Settings
         left_col = ttk.Frame(main_content)
         left_col.pack(side="left", fill="both", expand=True, padx=5, pady=5)
-
+        
         # 0. Source Selection (Single File)
         src_f = ttk.LabelFrame(left_col, text=" Single File Source ", padding=10)
         src_f.pack(fill="x", padx=5, pady=5)
@@ -730,7 +782,7 @@ class BZReduxSuite:
         if HAS_DND:
             self.tex_single_entry.drop_target_register(DND_FILES)
             self.tex_single_entry.dnd_bind('<<Drop>>', self.on_tex_drop)
-
+        
         # 1. Format Options
         fmt_f = ttk.LabelFrame(left_col, text=" Format Settings ", padding=10)
         fmt_f.pack(fill="x", padx=5, pady=5)
@@ -739,12 +791,12 @@ class BZReduxSuite:
         self.tex_to_ext.trace_add("write", self.update_tex_ui_state)
         ttk.Label(fmt_f, text="Output Format:").grid(row=0, column=0, padx=5, sticky="w")
         ttk.Combobox(fmt_f, textvariable=self.tex_to_ext, values=[".dds", ".png", ".tga"], state="readonly", width=10).grid(row=0, column=1, padx=5, pady=5)
-
+        
         ttk.Label(fmt_f, text="Compression:").grid(row=1, column=0, padx=5, sticky="w")
         self.tex_compress = tk.StringVar(value="Auto")
         self.tex_compress_combo = ttk.Combobox(fmt_f, textvariable=self.tex_compress, values=["Auto", "DXT1", "DXT5", "None"], state="readonly", width=10)
         self.tex_compress_combo.grid(row=1, column=1, padx=5, pady=2)
-
+        
         self.tex_mips = tk.BooleanVar(value=self.config.get("tex_mips", True))
         self.tex_mips_chk = ttk.Checkbutton(fmt_f, text="Gen Mipmaps", variable=self.tex_mips)
         self.tex_mips_chk.grid(row=2, column=0, columnspan=2, padx=5, pady=2, sticky="w")
@@ -758,11 +810,11 @@ class BZReduxSuite:
         # FIX: Moved Overwrite into the format frame using grid to match its siblings
         self.tex_overwrite = tk.BooleanVar(value=self.config.get("tex_overwrite", False)) 
         ttk.Checkbutton(fmt_f, text="Overwrite Existing", variable=self.tex_overwrite).grid(row=4, column=0, columnspan=2, padx=5, pady=5, sticky="w")
-
+        
         # --- Advanced Map Generation Section ---
         gen_f = ttk.LabelFrame(left_col, text=" Map Generation ", padding=10)
         gen_f.pack(pady=5, padx=5, fill="x")
-
+        
         # Emissive Row
         e_f = ttk.Frame(gen_f)
         e_f.pack(fill="x", padx=10, pady=2)
@@ -770,7 +822,7 @@ class BZReduxSuite:
         ttk.Label(e_f, text="Threshold:").pack(side="right", padx=5)
         tk.Scale(e_f, from_=0, to=255, orient="horizontal", variable=self.emissive_thresh, width=10, length=100,
                  bg=BZ_BG, fg=BZ_FG, troughcolor="#1a1a1a", activebackground=BZ_GREEN, highlightthickness=0).pack(side="right")
-
+        
         # Specular Row
         s_f = ttk.Frame(gen_f)
         s_f.pack(fill="x", padx=10, pady=2)
@@ -778,7 +830,7 @@ class BZReduxSuite:
         ttk.Label(s_f, text="Contrast:").pack(side="right", padx=5)
         tk.Scale(s_f, from_=0.5, to=3.0, resolution=0.1, orient="horizontal", variable=self.spec_contrast, width=10, length=100,
                  bg=BZ_BG, fg=BZ_FG, troughcolor="#1a1a1a", activebackground=BZ_GREEN, highlightthickness=0).pack(side="right")
-
+        
         # Normal Row
         n_f = ttk.Frame(gen_f)
         n_f.pack(fill="x", padx=10, pady=2)
@@ -787,7 +839,7 @@ class BZReduxSuite:
         ttk.Label(n_f, text="Strength:").pack(side="right", padx=5)
         tk.Scale(n_f, from_=0.1, to=10.0, resolution=0.1, orient="horizontal", variable=self.norm_strength, width=10, length=100,
                  bg=BZ_BG, fg=BZ_FG, troughcolor="#1a1a1a", activebackground=BZ_GREEN, highlightthickness=0).pack(side="right")
-
+        
         # 3. Actions & Log (Right Column)
         right_col = ttk.Frame(main_content)
         right_col.pack(side="right", fill="both", expand=True, padx=5, pady=5)
@@ -798,13 +850,13 @@ class BZReduxSuite:
         
         self.tex_log = tk.Text(right_col, height=15, bg="#050505", fg=BZ_FG, font=("Consolas", 9))
         self.tex_log.pack(fill="both", expand=True, padx=5, pady=5)
-
+        
         self.tex_progress = ttk.Progressbar(right_col, style="BZ.Horizontal.TProgressbar", mode="determinate")
         self.tex_progress.pack(fill="x", padx=5, pady=5)
         # Style for progress bar needs to be defined if not already
         style = ttk.Style()
         style.configure("BZ.Horizontal.TProgressbar", thickness=15, background=BZ_GREEN, troughcolor="#050505")
-
+        
         btn_f = ttk.Frame(right_col)
         btn_f.pack(fill="x", pady=5)
         ttk.Button(btn_f, text="Process Single", command=self.ui_single_tex).pack(side="left", fill="x", expand=True, padx=2)
