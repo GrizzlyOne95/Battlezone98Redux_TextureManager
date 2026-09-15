@@ -13,6 +13,11 @@ try:
 except ImportError:
     HAS_DND = False
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import bcpack
+import uiscan
+import recompress
+
 def load_custom_font(font_path):
     """ Cross-platform font registration """
     if not os.path.exists(font_path):
@@ -118,15 +123,6 @@ BUILTIN_MOON_PALETTE = [
     (15, 0, 0), (255, 255, 0), (164, 164, 0), (127, 127, 0), (80, 80, 0),
     (64, 64, 0), (255, 0, 255)
 ]
-def resource_path(relative_path):
-    """ Get absolute path to resource, works for dev and for PyInstaller """
-    try:
-        # PyInstaller creates a temp folder and stores path in _MEIPASS
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.abspath(".")
-    return os.path.join(base_path, relative_path)
-
 class ToolTip:
     def __init__(self, widget, text):
         self.widget = widget
@@ -876,6 +872,23 @@ class BZReduxSuite:
         ttk.Entry(batch_f, textvariable=self.tex_batch_out).pack(fill="x", padx=10, pady=2)
         ttk.Button(batch_f, text="Set Output Folder", command=self.set_tex_batch_out).pack(pady=2, fill="x")
 
+        # --- Bulk recompress: the whole-mod pass, not a per-file conversion ---
+        # Separate from Batch Folder above because it rewrites in place, keeps
+        # the author's mips and resolutions, and is the operation that actually
+        # moves a mod's footprint (ISDF Chronicles: 7.8 GB of DDS -> 2.8 GB).
+        rc_f = ttk.LabelFrame(left_col, text=" Bulk DDS Recompress (in place) ", padding=10)
+        rc_f.pack(fill="x", padx=5, pady=5)
+
+        self.rc_skip_ui = tk.BooleanVar(value=True)
+        ttk.Checkbutton(rc_f, text="Skip UI / HUD / font textures",
+                        variable=self.rc_skip_ui).pack(anchor="w", pady=1)
+        self.rc_dry = tk.BooleanVar(value=False)
+        ttk.Checkbutton(rc_f, text="Dry run (report only, write nothing)",
+                        variable=self.rc_dry).pack(anchor="w", pady=1)
+        ttk.Button(rc_f, text="Recompress Mod Folder...",
+                   command=self.start_recompress_thread,
+                   style="Action.TButton").pack(pady=(5, 0), fill="x")
+
     def browse_single_tex(self):
         path = filedialog.askopenfilename(filetypes=[("Image", "*.png;*.tga;*.jpg;*.bmp;*.dds")])
         if path:
@@ -889,7 +902,7 @@ class BZReduxSuite:
 
     def load_tex_preview(self, path):
         try:
-            img = Image.open(path)
+            img, _ = self.internal_load_rgba(path)   # one loader, same as processing uses
             # Resize for preview
             img.thumbnail((300, 200))
             self.tk_tex_preview = ImageTk.PhotoImage(img)
@@ -920,6 +933,77 @@ class BZReduxSuite:
         self.tex_progress['value'] = 0
         thread = threading.Thread(target=self.ui_batch_tex, args=(src_folder,), daemon=True)
         thread.start()
+
+    def start_recompress_thread(self):
+        folder = filedialog.askdirectory(title="Mod folder to recompress (rewritten IN PLACE)")
+        if not folder:
+            return
+        backup = None
+        if not self.rc_dry.get():
+            # Not optional, and not defaulted to a subfolder of the mod: this
+            # overwrites the only copy of the art, and a backup inside the tree
+            # being rewritten is one stray glob away from being rewritten too.
+            backup = filedialog.askdirectory(title="Where to keep the ORIGINALS (required)")
+            if not backup:
+                self.log_msg(self.tex_log, "Recompress cancelled: no backup folder chosen.")
+                return
+            if os.path.abspath(backup).startswith(os.path.abspath(folder) + os.sep):
+                messagebox.showerror(
+                    "Backup folder",
+                    "The backup folder is inside the folder being recompressed.\n"
+                    "Choose somewhere outside it.")
+                return
+        self.tex_progress['value'] = 0
+        threading.Thread(target=self.ui_recompress, args=(folder, backup),
+                         daemon=True).start()
+
+    def ui_recompress(self, folder, backup):
+        """Drive recompress.convert over a mod folder, logging to the texture tab."""
+        def out(msg):
+            self.root.after(0, lambda m=msg: self.log_msg(self.tex_log, m))
+
+        dry = self.rc_dry.get()
+        try:
+            ui = {} if not self.rc_skip_ui.get() else uiscan.ui_textures(folder)
+        except Exception as e:
+            ui = {}
+            out(f"UI scan failed ({e}); compressing everything.")
+        if ui:
+            out(f"Leaving {len(ui)} UI texture(s) uncompressed: {', '.join(sorted(ui))}")
+
+        names = sorted((f for f in os.listdir(folder) if f.lower().endswith(".dds")),
+                       key=lambda n: -os.path.getsize(os.path.join(folder, n)))
+        if not names:
+            out("No .dds files in that folder.")
+            return
+        out(f"{'DRY RUN: ' if dry else ''}{len(names)} DDS file(s) to examine...")
+
+        before = after = 0
+        done = skipped = 0
+        for i, n in enumerate(names, 1):
+            try:
+                r = recompress.convert(os.path.join(folder, n), backup, dry, ui)
+            except Exception as e:
+                out(f"  {n}: FAILED ({e})")
+                continue
+            if "skipped" in r:
+                skipped += 1
+            else:
+                done += 1
+                before += r["before"]
+                after += r["after"]
+                out("  %-34s %7.1f -> %6.2f MB  %s%s" % (
+                    r["file"], r["before"] / 1048576, r["after"] / 1048576, r["fmt"],
+                    "" if dry else "  rmse %.2f" % r["rmse"]))
+            self.root.after(0, lambda p=i / len(names) * 100:
+                            self.tex_progress.configure(value=p))
+
+        if done:
+            out("%s%d file(s): %.0f MB -> %.0f MB  (%.1fx, %.0f MB saved). %d skipped."
+                % ("DRY RUN " if dry else "", done, before / 1048576, after / 1048576,
+                   before / max(1, after), (before - after) / 1048576, skipped))
+        else:
+            out(f"Nothing to do: {skipped} file(s) skipped (already compressed, UI, or too small).")
 
     def ui_batch_tex(self, src_folder):
         """Thread-safe batch processing with progress updates"""
@@ -966,7 +1050,7 @@ class BZReduxSuite:
         if os.path.exists(out_path) and not self.tex_overwrite.get():
             return f"Skipped: {file_no_ext}{target_ext} already exists."
 
-        img = Image.open(path).convert("RGBA")
+        img, src_levels = self.internal_load_rgba(path)
         w, h = img.size
 
 # --- RESTORED: Power of 2 Rescaling Logic ---
@@ -979,6 +1063,7 @@ class BZReduxSuite:
                     new_w, new_h = w // 2, h // 2
                     img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
                     w, h = img.size # Update dimensions for logging
+                    src_levels = None   # resampled: the source chain no longer matches
             except ValueError:
                 pass
 
@@ -998,83 +1083,72 @@ class BZReduxSuite:
         if self.gen_specular.get(): self.internal_gen_specular(img, dest_dir, gen_name, target_ext)
         if self.gen_normal.get(): self.internal_gen_normal(img, dest_dir, gen_name, target_ext)
         
-        self.internal_save_img(img, out_path, has_alpha)
-        return f"Done: {file_no_ext} ({w}x{h}) -> {target_ext}"  
-        
+        self.internal_save_img(img, out_path, has_alpha, src_levels)
+        return f"Done: {file_no_ext} ({w}x{h}) -> {target_ext}"
+
     # --- INTERNAL UTILITIES ---
-    def internal_save_img(self, img, out_path, has_alpha):
-        if out_path.lower().endswith(".dds"):
-            # 1. Save a temp TGA (Lossless, handles alpha well)
-            temp_tga = out_path.replace(".dds", "_temp.tga")
-            img.save(temp_tga)
-            
-            # 2. Determine compression format
-            # BC1 = DXT1 (No alpha), BC3 = DXT5 (Smooth alpha)
-            comp_mode = self.tex_compress.get()
-            if comp_mode == "Auto":
-                fmt = "BC3_UNORM" if has_alpha else "BC1_UNORM"
-            elif comp_mode == "DXT1":
-                fmt = "BC1_UNORM"
-            elif comp_mode == "DXT5":
-                fmt = "BC3_UNORM"
-            else: # None
-                fmt = "B8G8R8A8_UNORM"
-            
-            # 3. Setup texconv command
-            # -m 0: Generate full mipmap chain
-            # -y: Overwrite existing
-            # -f: Pixel format
-            texconv_bin = resource_path("texconv.exe")
-            
-            if os.name == 'nt' and os.path.exists(texconv_bin):
-                cmd = [
-                    texconv_bin,
-                    "-f", fmt,
-                    "-y",
-                    "-o", os.path.dirname(out_path),
-                    temp_tga
-                ]
-                
-                # Handle mipmap setting from your UI
-                if self.tex_mips.get():
-                    cmd.extend(["-m", "0"]) # Full chain
-                else:
-                    cmd.extend(["-m", "1"]) # Single level
-                    
-                try:
-                    # Hide the console window when running the subprocess
-                    startupinfo = None
-                    if os.name == 'nt':
-                        startupinfo = subprocess.STARTUPINFO()
-                        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                    
-                    subprocess.run(cmd, check=True, startupinfo=startupinfo, capture_output=True)
-                    
-                    # texconv creates [filename].dds. If we saved temp as [name]_temp.tga, 
-                    # it creates [name]_temp.dds. Rename it to the final out_path.
-                    generated_dds = temp_tga.replace(".tga", ".dds")
-                    if os.path.exists(generated_dds):
-                        if os.path.exists(out_path): os.remove(out_path)
-                        os.rename(generated_dds, out_path)
-                        
-                finally:
-                    if os.path.exists(temp_tga): os.remove(temp_tga)
-            else:
-                # Fallback for Linux/MacOS or missing texconv
-                # imageio doesn't support BC1/BC3 compression directly as easily as texconv,
-                # but it can save basic DDS files.
-                try:
-                    import imageio.v3 as iio
-                    # Note: complex compression options are limited in imageio/freeimage for DDS
-                    iio.imwrite(out_path, img) 
-                    if os.path.exists(temp_tga): os.remove(temp_tga)
-                except Exception as e:
-                    self.log_msg(self.tex_log, f"DDS Fallback Error: {e}")
-                    if os.path.exists(temp_tga): os.remove(temp_tga)
-                
-        else:
-            # Standard save for non-DDS files
+    def internal_load_rgba(self, path):
+        """-> (RGBA PIL image, source mip levels or None).
+
+        bcpack is tried first for uncompressed DDS, not because Pillow gets the
+        pixels wrong -- at 12.3.0 it agrees on every layout in this art to within
+        1/255 -- but because Pillow exposes **mip 0 only**: a DDS has no
+        `n_frames` and `seek(1)` raises EOFError. Reading the levels here is what
+        lets the save path transcode the author's own chain instead of resampling
+        a new one.
+
+        Anything bcpack declines (already block-compressed, cubemap, exotic) falls
+        through to Pillow, which handles those plus PNG/TGA/JPG/BMP.
+        """
+        if path.lower().endswith(".dds"):
+            try:
+                levels, _ = bcpack.read_dds(path)
+                return Image.fromarray(levels[0], "RGBA"), levels
+            except bcpack.Unsupported:
+                pass          # compressed or exotic: Pillow's DDS reader handles it
+        return Image.open(path).convert("RGBA"), None
+
+    def internal_save_img(self, img, out_path, has_alpha, src_levels=None):
+        """Write the image, block-compressing in-process when the target is DDS.
+
+        This used to shell out to texconv.exe through a temporary TGA. It now
+        encodes with bcpack, which removes the external binary from the build
+        entirely (it was step 3 of the README's setup) and drops the temp file
+        and subprocess per image.
+
+        `src_levels` is the source file's own mip chain, when the caller read
+        one and did not transform the image. Those levels are transcoded as they
+        are, so an author's hand-tuned chain survives instead of being resampled
+        by whatever filter we would have picked for them.
+        """
+        if not out_path.lower().endswith(".dds"):
             img.save(out_path)
+            return
+
+        base = np.asarray(img.convert("RGBA"), dtype=np.uint8)
+        levels = src_levels if src_levels else [base]
+
+        comp_mode = self.tex_compress.get()
+        if comp_mode == "Auto":
+            # has_alpha comes from the caller's own extrema check; fall back to
+            # the shared 250 floor, which ignores the authoring noise that makes
+            # a literal `min < 255` double a fully opaque file's size.
+            fmt = "DXT5" if (has_alpha or bcpack.has_real_alpha(levels)) else "DXT1"
+        elif comp_mode in ("DXT1", "DXT5"):
+            fmt = comp_mode
+        else:
+            fmt = None                                   # "None": stay uncompressed
+
+        if self.tex_mips.get():
+            levels, _ = bcpack.build_chain(levels, base.shape[1], base.shape[0])
+        else:
+            levels = levels[:1]
+
+        if fmt is None:
+            bcpack.write_dds_uncompressed(out_path, levels)
+        else:
+            bcpack.write_dds(out_path, base.shape[1], base.shape[0],
+                             [bcpack.encode_level(lv, fmt) for lv in levels], fmt)
 
     def internal_gen_emissive(self, img, dest, name, ext):
         thresh = self.emissive_thresh.get()
@@ -1184,14 +1258,15 @@ class BZReduxSuite:
             # Extract raw DXT data
             raw_data = f.read(chunk_size)
             
-        # To use your existing PIL/texconv pipeline, we temporarily wrap this in a basic DDS
+        # Wrap the raw DXT payload in a minimal DDS so PIL can open it, then
+        # hand it to the shared save path for format/mips.
         temp_dds = path + ".tmp.dds"
         self.internal_wrap_dxt_to_dds(temp_dds, header, raw_data, has_alpha)
 
         try:
             # Open the wrapped DDS as a PIL image
             with Image.open(temp_dds) as img:
-                # Use your existing texture processor logic for compression/mips/format
+                # Reuse the shared texture save path for compression/mips/format
                 # Temporarily override UI variables to match this tab's settings
                 old_mips = self.tex_mips.get()
                 old_compress = self.tex_compress.get()

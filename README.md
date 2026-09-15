@@ -85,6 +85,78 @@ A tool to convert proprietary BZ2 encoded textures to PNG or DDS.
 
 <img width="1152" height="932" alt="image" src="https://github.com/user-attachments/assets/fcf80b0f-364f-4cb3-830c-717cd568f0ca" />
 
+### DDS Compression
+
+The Texture Manager writes DDS in-process rather than shelling out to
+`texconv.exe`. That binary used to be a required download placed next to the exe;
+it is no longer used anywhere, and every DDS the tool writes -- the texture
+processor, the generated emissive/specular/normal maps, and the DXTBZ2
+converter -- goes through `src/bcpack.py` instead.
+
+What that changes:
+
+* **No external binary, no temp file, no subprocess.** Pure Python on the
+  numpy/Pillow dependencies already declared.
+* **The author's mip chain survives.** Pillow exposes mip 0 of a DDS and nothing
+  else (no `n_frames`; `seek(1)` raises EOFError), so the old path had to
+  regenerate the whole chain with a filter nobody chose. Source levels are now
+  read and transcoded in place, and a chain is generated only for files that
+  shipped without one, or when the image was rescaled and the old levels no
+  longer match it.
+* **Pillow's own DDS writer was never an option** for the other half: it emits an
+  uncompressed surface with the FourCC zeroed and mipCount 0.
+
+### Bulk DDS Recompressor
+
+The same encoder drives a whole-mod pass, in the GUI under **Bulk DDS Recompress
+(in place)** on the Texture tab, or from the command line:
+
+```
+python src/recompress.py "<mod folder>" --backup "<somewhere safe>" [--dry-run]
+```
+
+This is the one that moves the needle on a big mod: ISDF Chronicles shipped
+**7.8 GB of DDS, of which 6.4 GB was uncompressed**, and this takes the folder to
+roughly 2.8 GB without changing a single resolution. It rewrites in place, so a
+backup folder is required and must be outside the tree being rewritten.
+
+#### What it decides, and why
+
+**DXT1 vs DXT5** comes from whether mip 0 has alpha the renderer could act on.
+The common "RGBA32 whose alpha is 255 everywhere" case is very common — 247 of
+429 in that mod — and costs 0.5 bpp instead of 1.0 with nothing lost, because
+there is nothing in the channel to lose. The test has a tolerance: those mission
+loading screens are alpha 255 everywhere except 2432 texels at exactly 254, out
+of 8.4 million. Reading `min < 255` literally there doubles the file to preserve
+one part in 255 of blend on 0.03% of an image that is drawn opaque and
+fullscreen.
+
+**UI art is skipped** (`src/uiscan.py`, override with `--compress-ui`). BC1
+quantises each 4×4 block to two endpoints, which on a glyph edge or a thin HUD
+rule reads as ringing where the same error on a diffuse map is invisible. The
+scan finds them by the material scheme they inherit — `BZSprite/AlphaHUD` and
+`BZSprite/AlphaHUDPixel` — not by filename, so it catches `bzfont` and
+`numbers2` without also catching `BZBaseCockpit`, which is a world-space model.
+The whole UI set is under 1% of the art, so this costs nothing worth having.
+
+**Every file is verified by decoding what was written**, not by trusting the
+settings that were applied, and the summary reports colour RMSE plus two extra
+columns:
+
+* normal maps get mean angular deviation of the decoded normal. For scale, BC1
+  measured 0.28–0.47° on real art, against the **3.70° per code step** that
+  R5G6B5 — the format most of these normal maps already ship in — imposes
+  anyway. BC1 is four times smaller *and* an order of magnitude inside the
+  existing error floor.
+* DXT5 files get mean alpha error. The BC4 encoder is exact on binary alpha,
+  which is the cutout case that actually matters.
+
+**Originals are copied out and hash-checked before anything is overwritten**, and
+later runs re-derive from that backup rather than from the already-compressed
+live file — so changing a setting and re-running replays the whole job cleanly
+instead of compounding on itself.
+
+
 ---
 
 ## Installation & Requirements
@@ -106,21 +178,19 @@ Download the latest platform build from the Releases section. The graphical **BZ
    pip install -r requirements.txt
    ```
 
-3. Download `texconv.exe` from Microsoft's DirectXTex GitHub and place it in the root folder before using/building the DDS features on Windows.
-
-4. Run the integrated graphical application:
+3. Run the integrated graphical application:
 
    ```bash
    python src/tex_man_entry.py
    ```
 
-5. Run the MakeMAP-compatible CLI directly:
+4. Run the MakeMAP-compatible CLI directly:
 
    ```bash
    python src/makemap_compat.py -8888 texture.png
    ```
 
-6. Run the regression suite:
+5. Run the regression suite:
 
    ```bash
    python -m unittest discover -s tests -v
