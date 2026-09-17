@@ -33,6 +33,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -54,11 +56,26 @@ jobs:
         python scripts/generate_app_icon.py branding/repo_icon.svg bzrtex.ico --png branding/app_icon.png
         cp bzrtex.ico branding/app_icon.ico
 
+    - name: Resolve package version
+      id: version
+      shell: bash
+      run: |
+        if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+          version="${GITHUB_REF_NAME#v}"
+        else
+          tag="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+          version="${tag#v}"
+          if [[ -z "$version" ]]; then
+            version="0.0.0"
+          fi
+        fi
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+
     - name: Generate Windows version metadata
       if: matrix.os == 'windows-latest'
       run: |
-        python scripts/generate_version_info.py --version "${{ github.ref_name }}" --target texture-manager --output branding/version_info_texture_manager.txt
-        python scripts/generate_version_info.py --version "${{ github.ref_name }}" --target makemap-compat --output branding/version_info_makemap.txt
+        python scripts/generate_version_info.py --version "${{ steps.version.outputs.version }}" --target texture-manager --output branding/version_info_texture_manager.txt
+        python scripts/generate_version_info.py --version "${{ steps.version.outputs.version }}" --target makemap-compat --output branding/version_info_makemap.txt
 
     - name: Download texconv (Windows only)
       if: matrix.os == 'windows-latest'
