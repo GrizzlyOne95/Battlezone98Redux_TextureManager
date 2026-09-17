@@ -73,6 +73,10 @@ class MakeMapDialog:
     def __init__(self, app):
         self.app = app
         self.win = tk.Toplevel(app.root)
+        try:
+            legacy.apply_window_icon(self.win, app.base_dir, app.resource_dir)
+        except Exception:
+            pass
         self.win.title("Advanced MakeMAP Compatibility")
         self.win.geometry("900x790")
         self.win.minsize(820, 700)

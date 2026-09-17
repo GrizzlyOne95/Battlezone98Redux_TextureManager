@@ -66,6 +66,57 @@ BZ_DARK_GREEN = "#004400"
 BZ_CYAN = "#00ffff"
 
 CONFIG_FILE = "tex_man_config.json"
+APP_USER_MODEL_ID = "GrizzlyOne95.Battlezone98Redux.TextureManager"
+
+
+def _set_app_user_model_id():
+    if sys.platform != "win32":
+        return
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
+    except Exception:
+        pass
+
+
+def _resolve_bundled_icon(base_dir, resource_dir, name):
+    candidates = [
+        os.path.join(resource_dir, "branding", name),
+        os.path.join(resource_dir, name),
+        os.path.join(base_dir, "branding", name),
+        os.path.join(base_dir, name),
+    ]
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates.append(os.path.join(os.path.dirname(here), "branding", name))
+    candidates.append(os.path.join(os.path.dirname(here), name))
+    candidates.append(os.path.join(here, "branding", name))
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def apply_window_icon(window, base_dir, resource_dir):
+    """Apply the canonical app icon to a Tk/Toplevel window."""
+    try:
+        ico_path = _resolve_bundled_icon(base_dir, resource_dir, "app_icon.ico") or _resolve_bundled_icon(base_dir, resource_dir, "bzrtex.ico")
+        if ico_path:
+            try:
+                window.iconbitmap(ico_path)
+            except Exception:
+                pass
+        png_path = _resolve_bundled_icon(base_dir, resource_dir, "app_icon.png")
+        if png_path:
+            try:
+                image = tk.PhotoImage(file=png_path)
+                window.iconphoto(True, image)
+                window._battlezone_app_icon = image
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+_set_app_user_model_id()
 
 class BZMapFormat:
     INDEXED, ARGB4444, RGB565, ARGB8888, XRGB8888 = 0, 1, 2, 3, 4
@@ -171,13 +222,7 @@ class BZReduxSuite:
         else:
             self.custom_font_name = "Consolas"
             
-        icon_path = os.path.join(self.resource_dir, "bzrtex.ico")
-        if not os.path.exists(icon_path):
-            icon_path = os.path.join(os.path.dirname(self.base_dir), "bzrtex.ico")
-            
-        if os.path.exists(icon_path):
-            try: self.root.iconbitmap(icon_path)
-            except: pass
+        apply_window_icon(self.root, self.base_dir, self.resource_dir)
 
         self.setup_styles()
         
