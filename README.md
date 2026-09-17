@@ -1,4 +1,4 @@
-# BZR Texture Manager (BZRTEX)
+# Battlezone Texture Manager
 
 A comprehensive utility suite designed for **Battlezone 98 Redux** modders. This tool streamlines the asset pipeline by providing specialized converters and editors for the game's unique file formats.
 
@@ -45,7 +45,7 @@ Handles the conversion of `.MAP` files, which are the specialized textures used 
 
 ### MakeMAP Compatibility
 
-The application integrates a clean-room compatibility implementation of the original **Battlezone MakeMAP (Mar 27 2017)**. The core is `src/makemap_compat.py`; `src/tex_man_entry.py` routes the graphical MAP tab through that codec and adds an **Advanced MakeMAP** dialog. Release builds also package a separate `BZR_MakeMAP_Compat_*` command-line utility for scripting and batch pipelines.
+The application integrates a clean-room compatibility implementation of the original **Battlezone MakeMAP (Mar 27 2017)**. The core is `src/makemap_compat.py`; `src/tex_man_entry.py` routes the graphical MAP tab through that codec and adds an **Advanced MakeMAP** dialog. Release builds also package the standalone `BZMakeMAPCompat` command-line utility for scripting and batch pipelines.
 
 The compatibility layer covers the complete MakeMAP option surface found in the reference executable:
 
@@ -59,9 +59,9 @@ The compatibility layer covers the complete MakeMAP option surface found in the 
 Example CLI usage:
 
 ```powershell
-BZR_MakeMAP_Compat_Windows.exe -8888 texture.png
-BZR_MakeMAP_Compat_Windows.exe -pal moon.act -transindex 0 -diff 100 terrain.png
-BZR_MakeMAP_Compat_Windows.exe -4444 -undopma effect.tga
+BZMakeMAPCompat.exe -8888 texture.png
+BZMakeMAPCompat.exe -pal moon.act -transindex 0 -diff 100 terrain.png
+BZMakeMAPCompat.exe -4444 -undopma effect.tga
 ```
 
 See [`docs/MAKEMAP_COMPATIBILITY.md`](docs/MAKEMAP_COMPATIBILITY.md) for the full parity matrix, reverse-engineered format details, transform order, and validation notes.
@@ -156,13 +156,41 @@ later runs re-derive from that backup rather than from the already-compressed
 live file — so changing a setting and re-running replays the whole job cleanly
 instead of compounding on itself.
 
-
 ---
 
 ## Installation & Requirements
 
 ### For Users
-Download the latest platform build from the Releases section. The graphical **BZR Texture Manager** contains the MakeMAP integration, and release artifacts also contain the standalone **BZR MakeMAP Compat** command-line utility.
+Download the latest platform archive from the Releases section. The archive contains the graphical **Battlezone Texture Manager** and the standalone **Battlezone MakeMAP Compatibility Tool**:
+
+- Windows: `BZTextureManager.exe` and `BZMakeMAPCompat.exe`
+- Linux/macOS: `BZTextureManager` and `BZMakeMAPCompat`
+
+Executable names are intentionally stable and versionless. Release archives carry the version, for example `Battlezone98Redux_TextureManager-v2.4-windows.zip`.
+
+### Windows application metadata
+
+Release builds use the shared **Battlezone Modding Tools** product identity.
+
+`BZTextureManager.exe`:
+
+```text
+FileDescription: Battlezone Texture Manager
+ProductName: Battlezone Modding Tools
+CompanyName: GrizzlyOne95
+OriginalFilename: BZTextureManager.exe
+```
+
+`BZMakeMAPCompat.exe`:
+
+```text
+FileDescription: Battlezone MakeMAP Compatibility Tool
+ProductName: Battlezone Modding Tools
+CompanyName: GrizzlyOne95
+OriginalFilename: BZMakeMAPCompat.exe
+```
+
+`FileVersion` and `ProductVersion` are generated from the release tag.
 
 ### For Developers
 
