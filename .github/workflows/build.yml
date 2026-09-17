@@ -19,23 +19,22 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            binary_name: BZR_Texture_Manager_Windows
-            artifact_name: BZR_Texture_Manager_Windows.exe
-            makemap_binary_name: BZR_MakeMAP_Compat_Windows
-            makemap_artifact_name: BZR_MakeMAP_Compat_Windows.exe
+            platform: windows
+            texture_artifact_name: BZTextureManager.exe
+            makemap_artifact_name: BZMakeMAPCompat.exe
           - os: ubuntu-latest
-            binary_name: BZR_Texture_Manager_Linux
-            artifact_name: BZR_Texture_Manager_Linux
-            makemap_binary_name: BZR_MakeMAP_Compat_Linux
-            makemap_artifact_name: BZR_MakeMAP_Compat_Linux
+            platform: linux
+            texture_artifact_name: BZTextureManager
+            makemap_artifact_name: BZMakeMAPCompat
           - os: macos-latest
-            binary_name: BZR_Texture_Manager_MacOS
-            artifact_name: BZR_Texture_Manager_MacOS
-            makemap_binary_name: BZR_MakeMAP_Compat_MacOS
-            makemap_artifact_name: BZR_MakeMAP_Compat_MacOS
+            platform: macos
+            texture_artifact_name: BZTextureManager
+            makemap_artifact_name: BZMakeMAPCompat
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -57,6 +56,27 @@ jobs:
         python scripts/generate_app_icon.py branding/repo_icon.svg bzrtex.ico --png branding/app_icon.png
         cp bzrtex.ico branding/app_icon.ico
 
+    - name: Resolve package version
+      id: version
+      shell: bash
+      run: |
+        if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+          version="${GITHUB_REF_NAME#v}"
+        else
+          tag="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+          version="${tag#v}"
+          if [[ -z "$version" ]]; then
+            version="0.0.0"
+          fi
+        fi
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+
+    - name: Generate Windows version metadata
+      if: matrix.os == 'windows-latest'
+      run: |
+        python scripts/generate_version_info.py --version "${{ steps.version.outputs.version }}" --target texture-manager --output branding/version_info_texture_manager.txt
+        python scripts/generate_version_info.py --version "${{ steps.version.outputs.version }}" --target makemap-compat --output branding/version_info_makemap.txt
+
     - name: Download texconv (Windows only)
       if: matrix.os == 'windows-latest'
       run: |
@@ -65,28 +85,34 @@ jobs:
     - name: Build Texture Manager (Windows)
       if: matrix.os == 'windows-latest'
       run: |
-        python -m PyInstaller --noconfirm --onefile --windowed --name "${{ matrix.binary_name }}" --icon "bzrtex.ico" --add-data "bzrtex.ico;." --add-data "branding/app_icon.png;branding" --add-data "branding/app_icon.ico;branding" --runtime-hook branding/pyinstaller_icon_hook.py --collect-all customtkinter --copy-metadata imageio src/tex_man_stock_palette_entry.py
+        python -m PyInstaller --noconfirm --onefile --windowed --name "BZTextureManager" --icon "bzrtex.ico" --version-file "branding/version_info_texture_manager.txt" --add-data "bzrtex.ico;." --add-data "branding/app_icon.png;branding" --add-data "branding/app_icon.ico;branding" --runtime-hook branding/pyinstaller_icon_hook.py --collect-all customtkinter --copy-metadata imageio src/tex_man_stock_palette_entry.py
 
     - name: Build Texture Manager (Linux)
       if: matrix.os == 'ubuntu-latest'
       run: |
-        python -m PyInstaller --noconfirm --onefile --windowed --name "${{ matrix.binary_name }}" --icon "bzrtex.ico" --add-data "bzrtex.ico:." --add-data "branding/app_icon.png:branding" --add-data "branding/app_icon.ico:branding" --runtime-hook branding/pyinstaller_icon_hook.py --collect-all customtkinter --copy-metadata imageio src/tex_man_stock_palette_entry.py
+        python -m PyInstaller --noconfirm --onefile --windowed --name "BZTextureManager" --icon "bzrtex.ico" --add-data "bzrtex.ico:." --add-data "branding/app_icon.png:branding" --add-data "branding/app_icon.ico:branding" --runtime-hook branding/pyinstaller_icon_hook.py --collect-all customtkinter --copy-metadata imageio src/tex_man_stock_palette_entry.py
 
     - name: Build Texture Manager (MacOS)
       if: matrix.os == 'macos-latest'
       run: |
-        python -m PyInstaller --noconfirm --onefile --windowed --name "${{ matrix.binary_name }}" --icon "bzrtex.ico" --add-data "bzrtex.ico:." --add-data "branding/app_icon.png:branding" --add-data "branding/app_icon.ico:branding" --runtime-hook branding/pyinstaller_icon_hook.py --collect-all customtkinter --copy-metadata imageio src/tex_man_stock_palette_entry.py
+        python -m PyInstaller --noconfirm --onefile --windowed --name "BZTextureManager" --icon "bzrtex.ico" --add-data "bzrtex.ico:." --add-data "branding/app_icon.png:branding" --add-data "branding/app_icon.ico:branding" --runtime-hook branding/pyinstaller_icon_hook.py --collect-all customtkinter --copy-metadata imageio src/tex_man_stock_palette_entry.py
 
-    - name: Build MakeMAP compatibility utility
+    - name: Build MakeMAP compatibility utility (Windows)
+      if: matrix.os == 'windows-latest'
       run: |
-        python -m PyInstaller --noconfirm --onefile --name "${{ matrix.makemap_binary_name }}" src/makemap_compat.py
+        python -m PyInstaller --noconfirm --onefile --name "BZMakeMAPCompat" --version-file "branding/version_info_makemap.txt" src/makemap_compat.py
+
+    - name: Build MakeMAP compatibility utility (Linux/macOS)
+      if: matrix.os != 'windows-latest'
+      run: |
+        python -m PyInstaller --noconfirm --onefile --name "BZMakeMAPCompat" src/makemap_compat.py
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ matrix.binary_name }}
+        name: Battlezone98Redux_TextureManager-${{ matrix.platform }}
         path: |
-          dist/${{ matrix.artifact_name }}
+          dist/${{ matrix.texture_artifact_name }}
           dist/${{ matrix.makemap_artifact_name }}
 
   release:
@@ -97,16 +123,39 @@ jobs:
     steps:
     - name: Download all artifacts
       uses: actions/download-artifact@v4
+      with:
+        path: release-artifacts
+
+    - name: Package release archives
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p release-packages/windows release-packages/linux release-packages/macos
+
+        cp release-artifacts/Battlezone98Redux_TextureManager-windows/BZTextureManager.exe release-packages/windows/
+        cp release-artifacts/Battlezone98Redux_TextureManager-windows/BZMakeMAPCompat.exe release-packages/windows/
+        cp release-artifacts/Battlezone98Redux_TextureManager-linux/BZTextureManager release-packages/linux/
+        cp release-artifacts/Battlezone98Redux_TextureManager-linux/BZMakeMAPCompat release-packages/linux/
+        cp release-artifacts/Battlezone98Redux_TextureManager-macos/BZTextureManager release-packages/macos/
+        cp release-artifacts/Battlezone98Redux_TextureManager-macos/BZMakeMAPCompat release-packages/macos/
+
+        chmod +x release-packages/linux/BZTextureManager release-packages/linux/BZMakeMAPCompat
+        chmod +x release-packages/macos/BZTextureManager release-packages/macos/BZMakeMAPCompat
+
+        (cd release-packages/windows && zip -q ../Battlezone98Redux_TextureManager-${GITHUB_REF_NAME}-windows.zip BZTextureManager.exe BZMakeMAPCompat.exe)
+        (cd release-packages/linux && tar -czf ../Battlezone98Redux_TextureManager-${GITHUB_REF_NAME}-linux.tar.gz BZTextureManager BZMakeMAPCompat)
+        (cd release-packages/macos && tar -czf ../Battlezone98Redux_TextureManager-${GITHUB_REF_NAME}-macos.tar.gz BZTextureManager BZMakeMAPCompat)
+
+        ls -lh release-packages/
 
     - name: Create Release
       uses: softprops/action-gh-release@v2
       with:
         files: |
-          BZR_Texture_Manager_Windows/BZR_Texture_Manager_Windows.exe
-          BZR_Texture_Manager_Windows/BZR_MakeMAP_Compat_Windows.exe
-          BZR_Texture_Manager_Linux/BZR_Texture_Manager_Linux
-          BZR_Texture_Manager_Linux/BZR_MakeMAP_Compat_Linux
-          BZR_Texture_Manager_MacOS/BZR_Texture_Manager_MacOS
-          BZR_Texture_Manager_MacOS/BZR_MakeMAP_Compat_MacOS
+          release-packages/Battlezone98Redux_TextureManager-v*-windows.zip
+          release-packages/Battlezone98Redux_TextureManager-v*-linux.tar.gz
+          release-packages/Battlezone98Redux_TextureManager-v*-macos.tar.gz
+        fail_on_unmatched_files: true
+        generate_release_notes: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

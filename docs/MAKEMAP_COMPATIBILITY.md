@@ -138,31 +138,31 @@ Alpha is not diffused. The implementation preserves this distribution and the re
 32-bit alpha MAP:
 
 ```powershell
-BZR_MakeMAP_Compat_Windows.exe -8888 texture.png
+BZMakeMAPCompat.exe -8888 texture.png
 ```
 
 16-bit 4444 effects texture with premultiplied alpha undone:
 
 ```powershell
-BZR_MakeMAP_Compat_Windows.exe -4444 -undopma effect.png
+BZMakeMAPCompat.exe -4444 -undopma effect.png
 ```
 
 Indexed MAP using a Battlezone ACT palette, transparent palette index 0, and reference-style diffusion:
 
 ```powershell
-BZR_MakeMAP_Compat_Windows.exe -pal moon.act -transindex 0 -diff 100 texture.png
+BZMakeMAPCompat.exe -pal moon.act -transindex 0 -diff 100 texture.png
 ```
 
 Chroma-keyed 565 conversion:
 
 ```powershell
-BZR_MakeMAP_Compat_Windows.exe -565 -chromakey 255 0 255 texture.tga
+BZMakeMAPCompat.exe -565 -chromakey 255 0 255 texture.tga
 ```
 
 Process an entire directory recursively:
 
 ```powershell
-BZR_MakeMAP_Compat_Windows.exe -8888 .\textures
+BZMakeMAPCompat.exe -8888 .\textures
 ```
 
 The original slash spelling is also accepted on Windows-style invocations, for example `/8888 /flipy`.
