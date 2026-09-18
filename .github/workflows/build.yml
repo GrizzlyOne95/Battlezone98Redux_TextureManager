@@ -63,11 +63,7 @@ jobs:
         if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
           version="${GITHUB_REF_NAME#v}"
         else
-          tag="$(git describe --tags --abbrev=0 2>/dev/null || true)"
-          version="${tag#v}"
-          if [[ -z "$version" ]]; then
-            version="0.0.0"
-          fi
+          version="$(tr -d '[:space:]' < VERSION)"
         fi
         echo "version=$version" >> "$GITHUB_OUTPUT"
 
@@ -76,11 +72,6 @@ jobs:
       run: |
         python scripts/generate_version_info.py --version "${{ steps.version.outputs.version }}" --target texture-manager --output branding/version_info_texture_manager.txt
         python scripts/generate_version_info.py --version "${{ steps.version.outputs.version }}" --target makemap-compat --output branding/version_info_makemap.txt
-
-    - name: Download texconv (Windows only)
-      if: matrix.os == 'windows-latest'
-      run: |
-        curl -L -o texconv.exe https://github.com/microsoft/DirectXTex/releases/latest/download/texconv.exe
 
     - name: Build Texture Manager (Windows)
       if: matrix.os == 'windows-latest'
@@ -118,9 +109,22 @@ jobs:
   release:
     name: Create Release
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: "${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'chore(release): v')) }}"
     runs-on: ubuntu-latest
     steps:
+    - uses: actions/checkout@v4
+
+    - name: Resolve release tag
+      id: release_version
+      shell: bash
+      run: |
+        if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+          tag="$GITHUB_REF_NAME"
+        else
+          tag="v$(tr -d '[:space:]' < VERSION)"
+        fi
+        echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
     - name: Download all artifacts
       uses: actions/download-artifact@v4
       with:
@@ -128,6 +132,8 @@ jobs:
 
     - name: Package release archives
       shell: bash
+      env:
+        RELEASE_TAG: ${{ steps.release_version.outputs.tag }}
       run: |
         set -euo pipefail
         mkdir -p release-packages/windows release-packages/linux release-packages/macos
@@ -142,15 +148,18 @@ jobs:
         chmod +x release-packages/linux/BZTextureManager release-packages/linux/BZMakeMAPCompat
         chmod +x release-packages/macos/BZTextureManager release-packages/macos/BZMakeMAPCompat
 
-        (cd release-packages/windows && zip -q ../Battlezone98Redux_TextureManager-${GITHUB_REF_NAME}-windows.zip BZTextureManager.exe BZMakeMAPCompat.exe)
-        (cd release-packages/linux && tar -czf ../Battlezone98Redux_TextureManager-${GITHUB_REF_NAME}-linux.tar.gz BZTextureManager BZMakeMAPCompat)
-        (cd release-packages/macos && tar -czf ../Battlezone98Redux_TextureManager-${GITHUB_REF_NAME}-macos.tar.gz BZTextureManager BZMakeMAPCompat)
+        (cd release-packages/windows && zip -q ../Battlezone98Redux_TextureManager-${RELEASE_TAG}-windows.zip BZTextureManager.exe BZMakeMAPCompat.exe)
+        (cd release-packages/linux && tar -czf ../Battlezone98Redux_TextureManager-${RELEASE_TAG}-linux.tar.gz BZTextureManager BZMakeMAPCompat)
+        (cd release-packages/macos && tar -czf ../Battlezone98Redux_TextureManager-${RELEASE_TAG}-macos.tar.gz BZTextureManager BZMakeMAPCompat)
 
         ls -lh release-packages/
 
     - name: Create Release
       uses: softprops/action-gh-release@v2
       with:
+        tag_name: ${{ steps.release_version.outputs.tag }}
+        name: ${{ steps.release_version.outputs.tag }}
+        target_commitish: ${{ github.sha }}
         files: |
           release-packages/Battlezone98Redux_TextureManager-v*-windows.zip
           release-packages/Battlezone98Redux_TextureManager-v*-linux.tar.gz
